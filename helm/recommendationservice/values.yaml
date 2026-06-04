@@ -1,0 +1,31 @@
+replicaCount: 2
+image:
+  repository: public.ecr.aws/online-boutique/recommendationservice
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  port: 8080
+  targetPort: 8080
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+pdb:
+  enabled: true
+  minAvailable: 1
+env: []

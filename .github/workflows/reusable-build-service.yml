@@ -1,0 +1,52 @@
+name: reusable-build-service
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      aws-region:
+        required: true
+        type: string
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Resolve build context
+        id: context
+        shell: bash
+        run: |
+          case "${{ inputs.service }}" in
+            cartservice)
+              echo "path=./src/cartservice/src" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "path=./src/${{ inputs.service }}" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+      - name: Build image
+        run: docker build -t ${{ inputs.service }}:${{ github.sha }} "${{ steps.context.outputs.path }}"
+      - name: Scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ inputs.service }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Push image
+        run: |
+          REPO="${{ secrets.ECR_REGISTRY }}/online-boutique/${{ inputs.service }}"
+          docker tag ${{ inputs.service }}:${{ github.sha }} "$REPO:${{ github.sha }}"
+          docker push "$REPO:${{ github.sha }}"
+      - name: Sign image
+        uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes "${{ secrets.ECR_REGISTRY }}/online-boutique/${{ inputs.service }}:${{ github.sha }}"

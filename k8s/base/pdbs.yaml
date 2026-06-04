@@ -1,0 +1,27 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: frontend }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: frontend } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: productcatalogservice }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: productcatalogservice } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: checkoutservice }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: checkoutservice } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: cartservice }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: cartservice } }

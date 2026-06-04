@@ -1,0 +1,21 @@
+{
+  "title": "Online Boutique Service Overview",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "timeseries",
+      "targets": [{"expr": "sum(rate(http_requests_total{namespace=\"online-boutique\"}[5m])) by (service)"}]
+    },
+    {
+      "title": "Pod CPU",
+      "type": "timeseries",
+      "targets": [{"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\",container!=\"\"}[5m])) by (pod)"}]
+    },
+    {
+      "title": "Pod Memory",
+      "type": "timeseries",
+      "targets": [{"expr": "sum(container_memory_working_set_bytes{namespace=\"online-boutique\",container!=\"\"}) by (pod)"}]
+    }
+  ]
+}

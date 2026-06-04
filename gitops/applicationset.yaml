@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: online-boutique-environments
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env: dev
+            namespace: online-boutique-dev
+          - env: qa
+            namespace: online-boutique-qa
+          - env: stage
+            namespace: online-boutique-stage
+          - env: prod
+            namespace: online-boutique
+  template:
+    metadata:
+      name: "online-boutique-{{env}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/replace-org/microservices-demo-aws.git
+        targetRevision: main
+        path: k8s/overlays/{{env}}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

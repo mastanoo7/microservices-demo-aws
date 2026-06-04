@@ -1,0 +1,261 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: frontend } }
+  template:
+    metadata: { labels: { app: frontend } }
+    spec:
+      serviceAccountName: online-boutique
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: frontend } }
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: frontend
+          image: public.ecr.aws/online-boutique/frontend:latest
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: PRODUCT_CATALOG_SERVICE_ADDR, value: "productcatalogservice:3550" }
+            - { name: CURRENCY_SERVICE_ADDR, value: "currencyservice:7000" }
+            - { name: CART_SERVICE_ADDR, value: "cartservice:7070" }
+            - { name: RECOMMENDATION_SERVICE_ADDR, value: "recommendationservice:8080" }
+            - { name: CHECKOUT_SERVICE_ADDR, value: "checkoutservice:5050" }
+            - { name: AD_SERVICE_ADDR, value: "adservice:9555" }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { httpGet: { path: /_healthz, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /_healthz, port: 8080 }, initialDelaySeconds: 30, periodSeconds: 20 }
+          startupProbe: { httpGet: { path: /_healthz, port: 8080 }, failureThreshold: 30, periodSeconds: 5 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cartservice
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: cartservice } }
+  template:
+    metadata: { labels: { app: cartservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: cartservice
+          image: public.ecr.aws/online-boutique/cartservice:latest
+          ports: [{ containerPort: 7070 }]
+          env:
+            - { name: REDIS_ADDR, value: "redis-cart:6379" }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 7070 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 7070 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkoutservice
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: checkoutservice } }
+  template:
+    metadata: { labels: { app: checkoutservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: checkoutservice
+          image: public.ecr.aws/online-boutique/checkoutservice:latest
+          ports: [{ containerPort: 5050 }]
+          env:
+            - { name: CART_SERVICE_ADDR, value: "cartservice:7070" }
+            - { name: PRODUCT_CATALOG_SERVICE_ADDR, value: "productcatalogservice:3550" }
+            - { name: CURRENCY_SERVICE_ADDR, value: "currencyservice:7000" }
+            - { name: PAYMENT_SERVICE_ADDR, value: "paymentservice:50051" }
+            - { name: SHIPPING_SERVICE_ADDR, value: "shippingservice:50051" }
+            - { name: EMAIL_SERVICE_ADDR, value: "emailservice:8080" }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 5050 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 5050 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paymentservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: paymentservice } }
+  template:
+    metadata: { labels: { app: paymentservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: paymentservice
+          image: public.ecr.aws/online-boutique/paymentservice:latest
+          ports: [{ containerPort: 50051 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 50051 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 50051 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendationservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: recommendationservice } }
+  template:
+    metadata: { labels: { app: recommendationservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: recommendationservice
+          image: public.ecr.aws/online-boutique/recommendationservice:latest
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: PRODUCT_CATALOG_SERVICE_ADDR, value: "productcatalogservice:3550" }
+          resources: { requests: { cpu: 100m, memory: 220Mi }, limits: { cpu: 500m, memory: 450Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shippingservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: shippingservice } }
+  template:
+    metadata: { labels: { app: shippingservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: shippingservice
+          image: public.ecr.aws/online-boutique/shippingservice:latest
+          ports: [{ containerPort: 50051 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 50051 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 50051 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: currencyservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: currencyservice } }
+  template:
+    metadata: { labels: { app: currencyservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: currencyservice
+          image: public.ecr.aws/online-boutique/currencyservice:latest
+          ports: [{ containerPort: 7000 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 7000 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 7000 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emailservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: emailservice } }
+  template:
+    metadata: { labels: { app: emailservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: emailservice
+          image: public.ecr.aws/online-boutique/emailservice:latest
+          ports: [{ containerPort: 8080 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productcatalogservice
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: productcatalogservice } }
+  template:
+    metadata: { labels: { app: productcatalogservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: productcatalogservice
+          image: public.ecr.aws/online-boutique/productcatalogservice:latest
+          ports: [{ containerPort: 3550 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 3550 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 3550 }, initialDelaySeconds: 30, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adservice
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: adservice } }
+  template:
+    metadata: { labels: { app: adservice } }
+    spec:
+      serviceAccountName: online-boutique
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: adservice
+          image: public.ecr.aws/online-boutique/adservice:latest
+          ports: [{ containerPort: 9555 }]
+          resources: { requests: { cpu: 200m, memory: 300Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 9555 }, initialDelaySeconds: 20, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 9555 }, initialDelaySeconds: 60, periodSeconds: 20 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cart
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis-cart } }
+  template:
+    metadata: { labels: { app: redis-cart } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 999, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          ports: [{ containerPort: 6379 }]
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { tcpSocket: { port: 6379 }, initialDelaySeconds: 5, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 6379 }, initialDelaySeconds: 20, periodSeconds: 20 }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: online-boutique
+  annotations:
+    eks.amazonaws.com/role-arn: replace-with-irsa-role-arn

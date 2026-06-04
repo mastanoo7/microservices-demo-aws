@@ -1,0 +1,23 @@
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [dev, qa, stage, prod]
+        required: true
+jobs:
+  terraform-apply:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.8.5 }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: terraform -chdir=terraform/environments/${{ inputs.environment }} init
+      - run: terraform -chdir=terraform/environments/${{ inputs.environment }} apply -auto-approve

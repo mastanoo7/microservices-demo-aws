@@ -1,0 +1,10 @@
+driver:
+  kind: ebpf
+falco:
+  rules_file:
+    - /etc/falco/falco_rules.yaml
+  priority: warning
+falcosidekick:
+  enabled: true
+  webui:
+    enabled: true

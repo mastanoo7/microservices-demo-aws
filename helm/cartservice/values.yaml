@@ -1,0 +1,31 @@
+replicaCount: 3
+image:
+  repository: public.ecr.aws/online-boutique/cartservice
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  port: 7070
+  targetPort: 7070
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+pdb:
+  enabled: true
+  minAvailable: 1
+env: []

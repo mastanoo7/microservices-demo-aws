@@ -1,0 +1,16 @@
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: replace-with-fluent-bit-irsa-role
+cloudWatchLogs:
+  enabled: true
+  region: us-east-1
+  logGroupName: /eks/online-boutique/apps
+  autoCreateGroup: true
+opensearch:
+  enabled: true
+  host: replace-with-opensearch-endpoint
+  port: 443
+  tls: true
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 512Mi }
