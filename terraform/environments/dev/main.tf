@@ -22,11 +22,12 @@ module "vpc" {
 }
 
 module "eks" {
-  source             = "../../eks"
-  name               = local.name
-  vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  tags               = local.tags
+  source               = "../../eks"
+  name                 = local.name
+  vpc_id               = module.vpc.vpc_id
+  private_subnet_ids   = module.vpc.private_subnet_ids
+  kubernetes_version   = "1.30"
+  tags                 = local.tags
 }
 
 module "ecr" {

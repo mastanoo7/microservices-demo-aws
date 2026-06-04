@@ -93,7 +93,7 @@ resource "aws_eks_node_group" "system" {
   node_group_name = "system"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.private_subnet_ids
-  instance_types  = ["m6i.large", "m7i.large"]
+  instance_types  = ["m7i-flex.large"]
   capacity_type   = "ON_DEMAND"
 
   scaling_config {
