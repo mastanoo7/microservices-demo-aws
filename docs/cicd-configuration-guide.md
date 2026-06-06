@@ -325,7 +325,7 @@ Protect `main` and require a pull request. Require all `CI` jobs:
 
 - `GitHub Actions`
 - `YAML syntax`
-- Terraform jobs for dev, QA, stage, and prod
+- Terraform plan jobs for dev, QA, stage, and prod
 - Kubernetes jobs for dev, QA, stage, and prod
 - `Helm charts`
 - All service image jobs
@@ -346,13 +346,27 @@ The `CI` workflow runs automatically and performs:
 
 1. GitHub Actions syntax and embedded shell validation
 2. YAML parsing
-3. Terraform formatting and validation for all environments
+3. Authenticated Terraform formatting, validation, and remote-state planning for
+   all environments
 4. Kustomize rendering for all environments
 5. Helm lint and template rendering
 6. Container builds for all application services
 7. Trivy scanning for `HIGH` and `CRITICAL` vulnerabilities
 
 Do not merge until every required job succeeds.
+
+Terraform CI never applies changes. Exit code `0` means no changes, exit code
+`2` means a valid plan contains proposed changes, and any other exit code fails
+CI. The plan result is written to the GitHub job summary.
+
+Because Terraform plan jobs use GitHub Environment secrets, environment approval
+rules also apply to those jobs. If production approvals should gate apply but
+not plan, create separate read-only planning environments/roles or move
+production plan credentials to an organization-approved plan-only workflow.
+
+GitHub does not expose environment secrets to pull requests from forks. Full
+Terraform plans are therefore skipped for fork pull requests; workflow, YAML,
+Kubernetes, Helm, image build, and vulnerability checks still run.
 
 ## 10. First Full Deployment to Dev
 

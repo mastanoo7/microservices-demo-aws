@@ -50,23 +50,90 @@ jobs:
               print(name)
 
   terraform:
-    name: Terraform (${{ matrix.environment }})
+    name: Terraform plan (${{ matrix.environment }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         environment: [dev, qa, stage, prod]
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+      TFVARS: ${{ secrets.TFVARS }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gha-${{ matrix.environment }}-plan
       - name: Check formatting
         run: terraform fmt -check -recursive terraform
-      - name: Initialize without remote state
-        run: terraform -chdir=terraform/environments/${{ matrix.environment }} init -backend=false -input=false
+      - name: Validate environment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Configure TF_STATE_BUCKET in the GitHub environment}"
+          : "${TF_LOCK_TABLE:?Configure TF_LOCK_TABLE in the GitHub environment}"
+      - name: Write optional Terraform variables
+        if: env.TFVARS != ''
+        shell: bash
+        run: printf '%s\n' "$TFVARS" > "${RUNNER_TEMP}/environment.tfvars"
+      - name: Initialize remote state
+        shell: bash
+        run: |
+          terraform -chdir=terraform/environments/${{ matrix.environment }} init \
+            -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=online-boutique/${{ matrix.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION:-us-east-1}" \
+            -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+            -backend-config="encrypt=true"
       - name: Validate
         run: terraform -chdir=terraform/environments/${{ matrix.environment }} validate
+      - name: Plan
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(-input=false -lock-timeout=5m -detailed-exitcode)
+          if [[ -s "${RUNNER_TEMP}/environment.tfvars" ]]; then
+            args+=("-var-file=${RUNNER_TEMP}/environment.tfvars")
+          fi
+
+          set +e
+          terraform -chdir=terraform/environments/${{ matrix.environment }} plan "${args[@]}"
+          exit_code=$?
+          set -e
+
+          case "$exit_code" in
+            0)
+              result="No infrastructure changes."
+              ;;
+            2)
+              result="Infrastructure changes are proposed."
+              ;;
+            *)
+              echo "Terraform plan failed with exit code $exit_code" >&2
+              exit "$exit_code"
+              ;;
+          esac
+
+          {
+            echo "## Terraform plan: ${{ matrix.environment }}"
+            echo
+            echo "$result"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   kubernetes:
     name: Kubernetes (${{ matrix.environment }})
