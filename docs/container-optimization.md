@@ -17,9 +17,8 @@
 - Use read-only root filesystem where compatible.
 - Set explicit UID/GID.
 - Generate SBOM with Syft.
-- Scan images with Trivy.
 - Sign images with Cosign keyless signing.
-- Enforce signatures and vulnerability thresholds in CI.
+- Enforce signatures in CI.
 
 ## Example Go Dockerfile
 
@@ -39,5 +38,6 @@ ENTRYPOINT ["/service"]
 
 ## CI Security Gates
 
-Trivy fails on critical vulnerabilities. Cosign signs pushed ECR images using
-GitHub OIDC. Dev deployments use immutable commit-SHA tags.
+Cosign signs pushed ECR images using GitHub OIDC. Dev deployments use immutable
+commit-SHA tags. Container vulnerability scanning is currently disabled and can
+be added back later.

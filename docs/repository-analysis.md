@@ -62,4 +62,6 @@ The dev platform baseline in this repository replaces demo observability with:
 
 ## CI/CD
 
-The generated pipeline uses GitHub Actions with reusable workflows for test, image build, Trivy scan, ECR push, Terraform plan/apply, Helm package, and GitOps deployment handoff.
+The generated pipeline uses GitHub Actions with reusable workflows for test,
+image build, ECR push, Terraform plan/apply, Helm package, and GitOps deployment
+handoff.

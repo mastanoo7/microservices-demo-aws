@@ -11,10 +11,10 @@ The `CI` jobs have explicit dependencies:
 3. Terraform plan for dev
 4. Dev Kubernetes manifest validation
 5. Helm validation
-6. Service image build and vulnerability scan
+6. Service image build
 7. On a successful push to `main`, call `Deploy platform`
 8. Terraform apply
-9. ECR image build, scan, push, and signing
+9. ECR image build, push, and signing
 10. Kubernetes deployment and smoke test
 
 Pull requests stop after validation and Terraform plan. They never apply.
@@ -176,7 +176,7 @@ Open a pull request into `main`.
 4. A remote-state Terraform plan for dev
 5. Dev Kustomize rendering
 6. Helm lint and template rendering
-7. Container builds and Trivy scanning
+7. Container builds
 
 On pull requests, Terraform only plans and never applies. Fork pull requests do
 not receive environment secrets, so the authenticated Terraform stage and its
@@ -204,7 +204,7 @@ The workflow:
 1. Assumes the dev AWS role using OIDC.
 2. Plans and applies Terraform.
 3. Bootstraps kubeadm and platform add-ons.
-4. Builds, scans, pushes, and signs all service images.
+4. Builds, pushes, and signs all service images.
 5. Retrieves kubeconfig from SSM.
 6. Opens an SSM tunnel to the private API endpoint.
 7. Installs ingress-nginx.
