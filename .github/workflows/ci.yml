@@ -203,6 +203,9 @@ jobs:
     name: Apply and deploy dev
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: images
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/deploy.yml
     with:
       image-tag: ${{ github.sha }}
