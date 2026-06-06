@@ -51,7 +51,7 @@ policy becomes a hard requirement.
 
 ## Monitoring and Logging
 
-The production baseline in this repository replaces demo observability with:
+The dev platform baseline in this repository replaces demo observability with:
 
 - Prometheus and Alertmanager for metrics and alerting.
 - Grafana dashboards for service, cluster, ingress, and AWS views.

@@ -19,8 +19,9 @@ been removed.
 
 ## Environments
 
-Separate root modules are provided under `environments/dev`, `qa`, `stage`, and
-`prod`. Override sizing with a `.tfvars` file:
+The deployable root module is `environments/dev`. Additional environments can
+be added later by copying and adapting the dev composition. Override sizing
+with a `.tfvars` file:
 
 ```hcl
 kubernetes_version          = "1.35"

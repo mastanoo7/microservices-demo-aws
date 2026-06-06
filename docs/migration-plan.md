@@ -30,9 +30,9 @@
 2. Deploy `dev` with Kustomize or Helm.
 3. Validate traffic through ALB.
 4. Run load, failure, and scaling tests.
-5. Promote to QA, stage, then prod using GitOps.
+5. Validate the dev deployment and record requirements for future environments.
 
-## Phase 5: Production Readiness
+## Phase 5: Dev Readiness
 
 1. Enable SLO dashboards and alert routes.
 2. Conduct game days for node failure, AZ impairment, Redis failure, and bad deployment.

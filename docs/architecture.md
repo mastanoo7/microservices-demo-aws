@@ -27,7 +27,7 @@ All user traffic terminates at an AWS Application Load Balancer managed by AWS L
 
 Most internal services communicate over gRPC. The `frontend` service exposes HTTP externally and acts as the public entry point. Redis stores cart state and is isolated behind a ClusterIP service.
 
-## Production Concerns
+## Dev Platform Concerns
 
 - Each service has resource requests and limits.
 - Each service has liveness, readiness, and startup probes.

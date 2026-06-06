@@ -13,8 +13,9 @@
 - Run three frontend replicas minimum.
 - Run three checkout, cart, and product catalog replicas minimum.
 - Run at least one on-demand system node per AZ.
-- Use Karpenter Spot capacity for stateless burst workloads.
+- Use Cluster Autoscaler with the worker ASG for burst workloads.
 
 ## Load Testing
 
-Run load tests before each stage and prod promotion. Validate autoscaling, ALB target health, Redis saturation, and error budget burn.
+Run load tests before significant dev releases. Validate autoscaling, load
+balancer health, Redis saturation, and error budget burn.

@@ -3,11 +3,6 @@ name: Deploy platform
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: Target GitHub environment
-        type: choice
-        options: [dev, qa, stage, prod]
-        required: true
       image-tag:
         description: Immutable application image tag; defaults to this commit SHA
         type: string
@@ -25,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-${{ inputs.environment }}
+  group: deploy-dev
   cancel-in-progress: false
 
 env:
@@ -35,7 +30,7 @@ jobs:
   infrastructure:
     name: Terraform apply
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: dev
     permissions:
       id-token: write
       contents: read
@@ -56,7 +51,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
-          role-session-name: gha-${{ inputs.environment }}-terraform
+          role-session-name: gha-dev-terraform
       - name: Resolve deployment metadata
         id: metadata
         shell: bash
@@ -81,10 +76,10 @@ jobs:
       - name: Terraform init
         shell: bash
         run: |
-          terraform -chdir=terraform/environments/${{ inputs.environment }} init \
+          terraform -chdir=terraform/environments/dev init \
             -input=false \
             -backend-config="bucket=$TF_STATE_BUCKET" \
-            -backend-config="key=online-boutique/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="key=online-boutique/dev/terraform.tfstate" \
             -backend-config="region=${AWS_REGION:-us-east-1}" \
             -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
             -backend-config="encrypt=true"
@@ -95,9 +90,9 @@ jobs:
           if [[ -s "${RUNNER_TEMP}/environment.tfvars" ]]; then
             args+=("-var-file=${RUNNER_TEMP}/environment.tfvars")
           fi
-          terraform -chdir=terraform/environments/${{ inputs.environment }} plan "${args[@]}"
+          terraform -chdir=terraform/environments/dev plan "${args[@]}"
       - name: Terraform apply
-        run: terraform -chdir=terraform/environments/${{ inputs.environment }} apply -input=false -auto-approve tfplan
+        run: terraform -chdir=terraform/environments/dev apply -input=false -auto-approve tfplan
 
   build-images:
     name: Build ${{ matrix.service }}
@@ -120,7 +115,6 @@ jobs:
     uses: ./.github/workflows/reusable-build-service.yml
     with:
       service: ${{ matrix.service }}
-      environment: ${{ inputs.environment }}
       aws-region: ${{ needs.infrastructure.outputs.aws-region }}
       image-tag: ${{ needs.infrastructure.outputs.image-tag }}
     secrets: inherit
@@ -130,7 +124,7 @@ jobs:
     if: always() && inputs.deploy-application && needs.infrastructure.result == 'success' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
     needs: [infrastructure, build-images]
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: dev
     permissions:
       id-token: write
       contents: read
@@ -151,7 +145,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-${{ inputs.environment }}-kubernetes
+          role-session-name: gha-dev-kubernetes
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
       - uses: azure/setup-helm@v4
@@ -167,16 +161,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          terraform -chdir=terraform/environments/${{ inputs.environment }} init \
+          terraform -chdir=terraform/environments/dev init \
             -input=false \
             -backend-config="bucket=$TF_STATE_BUCKET" \
-            -backend-config="key=online-boutique/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="key=online-boutique/dev/terraform.tfstate" \
             -backend-config="region=$AWS_REGION" \
             -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
             -backend-config="encrypt=true"
-          endpoint=$(terraform -chdir=terraform/environments/${{ inputs.environment }} output -raw cluster_api_endpoint)
-          parameter=$(terraform -chdir=terraform/environments/${{ inputs.environment }} output -raw kubeconfig_ssm_parameter)
-          terraform -chdir=terraform/environments/${{ inputs.environment }} output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
+          endpoint=$(terraform -chdir=terraform/environments/dev output -raw cluster_api_endpoint)
+          parameter=$(terraform -chdir=terraform/environments/dev output -raw kubeconfig_ssm_parameter)
+          terraform -chdir=terraform/environments/dev output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
           echo "api-host=${endpoint#https://}" | sed 's/:6443$//' >> "$GITHUB_OUTPUT"
           echo "parameter=$parameter" >> "$GITHUB_OUTPUT"
       - name: Connect and deploy
@@ -244,7 +238,7 @@ jobs:
             exit 1
           fi
           sed -i "s/value: .*/value: $APP_HOST/" \
-            "k8s/overlays/${{ inputs.environment }}/kustomization.yaml"
+            "k8s/overlays/dev/kustomization.yaml"
 
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
@@ -259,18 +253,18 @@ jobs:
             --wait \
             --timeout 10m
 
-          cat >> "k8s/overlays/${{ inputs.environment }}/kustomization.yaml" <<EOF
+          cat >> "k8s/overlays/dev/kustomization.yaml" <<EOF
           images:
           EOF
           for service in adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
-            cat >> "k8s/overlays/${{ inputs.environment }}/kustomization.yaml" <<EOF
+            cat >> "k8s/overlays/dev/kustomization.yaml" <<EOF
             - name: public.ecr.aws/online-boutique/$service
               newName: $ECR_REGISTRY/online-boutique/$service
               newTag: $IMAGE_TAG
           EOF
           done
 
-          kubectl apply -k "k8s/overlays/${{ inputs.environment }}"
+          kubectl apply -k k8s/overlays/dev
           while IFS= read -r deployment; do
             kubectl -n online-boutique rollout status "$deployment" --timeout=15m
           done < <(kubectl -n online-boutique get deployments -o name)
@@ -287,7 +281,7 @@ jobs:
           {
             echo "## Deployment"
             echo
-            echo "- Environment: ${{ inputs.environment }}"
+            echo "- Environment: dev"
             echo "- Image tag: \`$IMAGE_TAG\`"
             echo "- Application host: \`$APP_HOST\`"
             echo "- Ingress load balancer: \`${ingress_address:-pending}\`"

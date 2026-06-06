@@ -16,4 +16,6 @@
 
 ## External Integrations
 
-The demo application has no mandatory third-party production integrations. The generated AWS platform prepares integration points for payment providers, SMTP or SES, and product catalog storage, but keeps the application behavior compatible with upstream.
+The demo application has no mandatory third-party integrations. The AWS
+platform prepares integration points for payment providers, SMTP or SES, and
+product catalog storage while keeping upstream-compatible behavior.

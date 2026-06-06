@@ -8,12 +8,6 @@ spec:
     - list:
         elements:
           - env: dev
-            namespace: online-boutique-dev
-          - env: qa
-            namespace: online-boutique-qa
-          - env: stage
-            namespace: online-boutique-stage
-          - env: prod
             namespace: online-boutique
   template:
     metadata:

@@ -2,12 +2,12 @@
 
 ## Recommendations
 
-- Use Karpenter with diversified Spot capacity for stateless services.
-- Keep baseline on Savings Plans-backed on-demand managed node groups.
+- Use the worker ASG with conservative minimum capacity.
+- Evaluate Savings Plans after measuring dev utilization.
 - Use ECR lifecycle policies to expire untagged and old images.
 - Use VPC endpoints to reduce NAT gateway data processing where traffic is heavy.
 - Prefer Graviton instances after image compatibility testing.
-- Move production Redis to ElastiCache with reserved nodes if cart durability matters.
+- Move Redis to ElastiCache if dev testing requires durable cart state.
 
 ## Estimated Monthly Platform Cost
 
@@ -15,10 +15,7 @@ These are planning estimates and exclude application-specific data transfer spik
 
 | Environment | Pattern | Estimated monthly cost |
 |---|---|---:|
-| Dev | 1 small node group, Spot Karpenter, single NAT | USD 450-750 |
-| QA | 2 node groups, mixed Spot/on-demand, single NAT | USD 900-1,500 |
-| Stage | 3 AZ, production-like, 3 NAT, observability retained 30 days | USD 2,500-4,500 |
-| Prod | 3 AZ, HA baseline, Karpenter Spot plus on-demand, WAF, OpenSearch, CloudWatch | USD 6,500-14,000 |
+| Dev | 1 control plane, worker ASG, single NAT | USD 450-750 |
 
 ## Largest Cost Drivers
 

@@ -50,17 +50,13 @@ jobs:
               print(name)
 
   terraform:
-    name: Terraform plan (${{ matrix.environment }})
+    name: Terraform plan (dev)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    environment: ${{ matrix.environment }}
+    environment: dev
     permissions:
       id-token: write
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: [dev, qa, stage, prod]
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
@@ -76,7 +72,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
-          role-session-name: gha-${{ matrix.environment }}-plan
+          role-session-name: gha-dev-plan
       - name: Check formatting
         run: terraform fmt -check -recursive terraform
       - name: Validate environment configuration
@@ -92,15 +88,15 @@ jobs:
       - name: Initialize remote state
         shell: bash
         run: |
-          terraform -chdir=terraform/environments/${{ matrix.environment }} init \
+          terraform -chdir=terraform/environments/dev init \
             -input=false \
             -backend-config="bucket=$TF_STATE_BUCKET" \
-            -backend-config="key=online-boutique/${{ matrix.environment }}/terraform.tfstate" \
+            -backend-config="key=online-boutique/dev/terraform.tfstate" \
             -backend-config="region=${AWS_REGION:-us-east-1}" \
             -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
             -backend-config="encrypt=true"
       - name: Validate
-        run: terraform -chdir=terraform/environments/${{ matrix.environment }} validate
+        run: terraform -chdir=terraform/environments/dev validate
       - name: Plan
         id: plan
         shell: bash
@@ -112,7 +108,7 @@ jobs:
           fi
 
           set +e
-          terraform -chdir=terraform/environments/${{ matrix.environment }} plan "${args[@]}"
+          terraform -chdir=terraform/environments/dev plan "${args[@]}"
           exit_code=$?
           set -e
 
@@ -130,22 +126,18 @@ jobs:
           esac
 
           {
-            echo "## Terraform plan: ${{ matrix.environment }}"
+            echo "## Terraform plan: dev"
             echo
             echo "$result"
           } >> "$GITHUB_STEP_SUMMARY"
 
   kubernetes:
-    name: Kubernetes (${{ matrix.environment }})
+    name: Kubernetes (dev)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: [dev, qa, stage, prod]
     steps:
       - uses: actions/checkout@v4
       - name: Render Kustomize overlay
-        run: kubectl kustomize k8s/overlays/${{ matrix.environment }} > /tmp/rendered.yaml
+        run: kubectl kustomize k8s/overlays/dev > /tmp/rendered.yaml
       - name: Validate rendered YAML
         run: kubectl apply --dry-run=client --validate=false -f /tmp/rendered.yaml
 

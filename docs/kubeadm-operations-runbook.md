@@ -41,7 +41,7 @@ ASG instance refresh after a Launch Template or AMI change:
 
 ```powershell
 aws autoscaling start-instance-refresh `
-  --auto-scaling-group-name online-boutique-prod-workers `
+  --auto-scaling-group-name online-boutique-dev-workers `
   --preferences MinHealthyPercentage=80,InstanceWarmup=300
 ```
 

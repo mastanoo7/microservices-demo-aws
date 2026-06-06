@@ -2,16 +2,14 @@
 
 ## Targets
 
-- Dev/QA RTO: 8 hours, RPO: 24 hours.
-- Stage RTO: 4 hours, RPO: 4 hours.
-- Prod RTO: 1 hour, RPO: 15 minutes.
+- Dev RTO: 8 hours, RPO: 24 hours.
 
 ## Backup
 
 - Store Terraform state in versioned S3 with DynamoDB locking.
 - Back up Kubernetes manifests through GitOps.
 - Use Velero for cluster object and persistent volume backups.
-- Prefer ElastiCache Redis with automated backups for production cart state.
+- Use ElastiCache Redis backups if durable dev cart state is required.
 
 ## Multi-Region Failover
 

@@ -16,7 +16,7 @@ The temporary `upstream-microservices-demo/` folder was only used to clone the o
 - Shared protobuf definitions were merged into `protos/`.
 - Original GKE, Istio, Cloud Build, Skaffold, Helm, and GCP Terraform assets were archived under `docs/upstream-gke-reference/`.
 - AWS-native kubeadm infrastructure lives under `terraform/`.
-- Production Kubernetes manifests live under `k8s/`.
+- Dev Kubernetes manifests live under `k8s/`.
 - Reusable per-service Helm charts live under `helm/`.
 - ArgoCD GitOps assets live under `gitops/`.
 - Observability, security, SRE, and CI/CD assets are included.
@@ -40,9 +40,8 @@ GitHub Actions builds these services from real source code:
 
 ## Deploy Order
 
-1. Configure GitHub OIDC, state storage, and the `dev`, `qa`, `stage`, and
-   `prod` GitHub Environments.
-2. Run the **Deploy platform** workflow for the target environment.
+1. Configure GitHub OIDC, state storage, and the `dev` GitHub Environment.
+2. Run the **Deploy platform** workflow.
 3. The workflow applies Terraform, bootstraps kubeadm and platform add-ons,
    builds and signs images, installs ingress-nginx, deploys the application, and
    runs a smoke test.

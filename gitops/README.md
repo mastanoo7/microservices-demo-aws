@@ -11,7 +11,5 @@ deployment with Argo CD. Update `repoURL` before use.
 ## Promotion Strategy
 
 1. CI builds immutable images and signs them.
-2. A promotion pull request updates image references.
+2. A reviewed change updates the dev image reference.
 3. Argo CD syncs dev automatically.
-4. QA, stage, and prod use reviewed promotions.
-5. Prod uses manual sync approval and sync windows.

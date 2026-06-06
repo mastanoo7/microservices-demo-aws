@@ -39,4 +39,5 @@ ENTRYPOINT ["/service"]
 
 ## CI Security Gates
 
-Trivy fails on critical vulnerabilities. Cosign signs pushed ECR images using GitHub OIDC. Deployment values use immutable digests rather than mutable tags in stage and prod.
+Trivy fails on critical vulnerabilities. Cosign signs pushed ECR images using
+GitHub OIDC. Dev deployments use immutable commit-SHA tags.

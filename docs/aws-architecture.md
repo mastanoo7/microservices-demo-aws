@@ -57,10 +57,9 @@ flowchart TB
 
 ## Failure Model
 
-- Loss of one control-plane node or one Availability Zone preserves API and etcd
-  quorum in a three-node production cluster.
+- The default single-node dev control plane is not highly available. Increase
+  `control_plane_count` to three when HA testing is required.
 - NLB health checks remove failed API servers.
 - Worker instances are replaceable and rejoin with a non-expiring, encrypted
   bootstrap token. PodDisruptionBudgets govern application disruption.
-- NAT gateways are per-AZ in stage and prod. Dev and QA intentionally use one NAT
-  gateway to reduce cost.
+- Dev uses one NAT gateway to reduce cost.

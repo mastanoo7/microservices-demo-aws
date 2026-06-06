@@ -6,9 +6,6 @@ on:
       service:
         required: true
         type: string
-      environment:
-        required: true
-        type: string
       aws-region:
         required: true
         type: string
@@ -20,7 +17,7 @@ jobs:
   build:
     name: Build ${{ inputs.service }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: dev
     permissions:
       id-token: write
       contents: read
@@ -30,7 +27,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
-          role-session-name: gha-${{ inputs.environment }}-${{ inputs.service }}
+          role-session-name: gha-dev-${{ inputs.service }}
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
       - name: Resolve image and build context

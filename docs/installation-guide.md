@@ -33,8 +33,7 @@ worker_max_size             = 6
 api_access_cidrs            = []
 ```
 
-Production should use three control-plane nodes and at least three workers across
-three Availability Zones.
+The current dev defaults use one control-plane node and two desired workers.
 
 ## 3. Provision
 
@@ -88,8 +87,8 @@ kubectl apply -k k8s/overlays/dev
 kubectl get pods -n online-boutique
 ```
 
-See `docs/validation.md` and `docs/kubeadm-operations-runbook.md` before
-production promotion.
+See `docs/validation.md` and `docs/kubeadm-operations-runbook.md` after
+deployment.
 
-For complete GitHub Actions deployment, configure the GitHub Environments
+For complete GitHub Actions deployment, configure the dev GitHub Environment
 described in `docs/cicd-configuration-guide.md`, then run **Deploy platform**.

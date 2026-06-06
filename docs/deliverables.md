@@ -8,11 +8,11 @@ This repository is organized as an AWS-native, self-managed Kubernetes migration
 | `docs/service-dependencies.md` | Captures service-to-service, data, and external dependencies. |
 | `docs/repository-analysis.md` | Records repository assessment and GKE-centric findings. |
 | `docs/migration-plan.md` | Provides phased migration steps and GCP-to-AWS mapping. |
-| `docs/aws-architecture.md` | Defines production AWS architecture with Mermaid diagrams. |
+| `docs/aws-architecture.md` | Defines the dev AWS architecture with Mermaid diagrams. |
 | `docs/container-optimization.md` | Documents container hardening and image optimization strategy. |
 | `docs/cost-estimation.md` | Provides cost optimization guidance and monthly estimates. |
 | `terraform/` | Provisions the VPC, kubeadm control plane, API NLB, worker ASG, IAM, ECR, security, secrets, and CloudWatch. |
-| `k8s/` | Provides production Kubernetes manifests with Kustomize base and environment overlays. |
+| `k8s/` | Provides Kubernetes manifests with a dev Kustomize overlay. |
 | `helm/` | Provides reusable per-service Helm charts. |
 | `observability/` | Provides monitoring, logging, tracing, dashboards, and alerting assets. |
 | `security/` | Provides policy, runtime security, external secrets, and service-account assets. |
@@ -23,7 +23,7 @@ This repository is organized as an AWS-native, self-managed Kubernetes migration
 | `docs/upstream-gke-reference/` | Archives original GKE, Istio, Helm, Skaffold, Cloud Build, and GCP Terraform assets for migration traceability only. |
 | `sre/` | Provides SLOs, runbooks, DR strategy, and capacity planning. |
 
-## Production Readiness Notes
+## Deployment Notes
 
 Before applying in a real AWS account, replace all placeholder values, pin
 application image digests, establish workload IAM through a self-managed OIDC

@@ -16,7 +16,7 @@ variable "tags" {
 }
 
 variable "single_nat_gateway" {
-  description = "Use one NAT gateway for lower-cost non-production environments."
+  description = "Use one NAT gateway for the lower-cost dev environment."
   type        = bool
   default     = false
 }
