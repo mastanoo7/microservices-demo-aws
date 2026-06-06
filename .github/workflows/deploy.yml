@@ -190,10 +190,14 @@ jobs:
           route53_zone_id=$(terraform -chdir=terraform/environments/dev output -raw route53_zone_id)
           terraform -chdir=terraform/environments/dev output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
           terraform -chdir=terraform/environments/dev output -json route53_name_servers > "${RUNNER_TEMP}/route53-name-servers.json"
-          echo "api-host=${endpoint#https://}" | sed 's/:6443$//' >> "$GITHUB_OUTPUT"
-          echo "parameter=$parameter" >> "$GITHUB_OUTPUT"
-          echo "app-hostname=$app_hostname" >> "$GITHUB_OUTPUT"
-          echo "route53-zone-id=$route53_zone_id" >> "$GITHUB_OUTPUT"
+          api_host=${endpoint#https://}
+          api_host=${api_host%:6443}
+          {
+            echo "api-host=$api_host"
+            echo "parameter=$parameter"
+            echo "app-hostname=$app_hostname"
+            echo "route53-zone-id=$route53_zone_id"
+          } >> "$GITHUB_OUTPUT"
       - name: Connect and deploy
         shell: bash
         env:
