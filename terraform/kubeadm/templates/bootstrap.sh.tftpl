@@ -166,10 +166,18 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     --overwrite
 
   publish_status "running role=$ROLE index=$INDEX step=addons"
-  kubectl create -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
+  publish_status "running role=$ROLE index=$INDEX step=calico-operator"
+  kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
+  kubectl wait \
+    --for=condition=Established \
+    --timeout=5m \
+    crd --all
+
+  publish_status "running role=$ROLE index=$INDEX step=calico-custom-resources"
   curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml" \
     | sed "s#192.168.0.0/16#$POD_CIDR#g" \
-    | kubectl create -f -
+    >/tmp/calico-custom-resources.yaml
+  retry 20 kubectl apply -f /tmp/calico-custom-resources.yaml
 
   aws s3 cp "s3://$BOOTSTRAP_BUCKET/addons/aws-cloud-controller-manager.yaml" /tmp/aws-ccm.yaml
   kubectl apply -f /tmp/aws-ccm.yaml
