@@ -209,15 +209,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          log() {
+            printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
+          }
+
+          log "Waiting for kubeconfig in SSM parameter $KUBECONFIG_PARAMETER."
           kubeconfig_ready=false
-          for _ in $(seq 1 120); do
+          for attempt in $(seq 1 120); do
             if aws ssm get-parameter \
               --name "$KUBECONFIG_PARAMETER" \
               --with-decryption \
               --query Parameter.Value \
               --output text > "$KUBECONFIG" 2>/dev/null; then
               kubeconfig_ready=true
+              log "Kubeconfig retrieved from SSM."
               break
+            fi
+            if (( attempt % 20 == 0 )); then
+              log "Kubeconfig is not available yet; waited $((attempt * 15 / 60)) minutes."
             fi
             sleep 15
           done
@@ -232,19 +241,35 @@ jobs:
           fi
           chmod 600 "$KUBECONFIG"
 
+          log "Waiting for a control-plane instance to become online in SSM."
           target=""
-          while IFS= read -r instance_id; do
-            status=$(aws ssm describe-instance-information \
-              --filters "Key=InstanceIds,Values=$instance_id" \
-              --query 'InstanceInformationList[0].PingStatus' \
-              --output text 2>/dev/null || true)
-            if [[ "$status" == "Online" ]]; then
-              target="$instance_id"
-              break
+          for attempt in $(seq 1 60); do
+            while IFS= read -r instance_id; do
+              status=$(aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=$instance_id" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text 2>/dev/null || true)
+              if [[ "$status" == "Online" ]]; then
+                target="$instance_id"
+                break
+              fi
+            done < <(jq -r '.[]' "${RUNNER_TEMP}/control-plane-ids.json")
+            [[ -n "$target" ]] && break
+            if (( attempt % 6 == 0 )); then
+              log "No control-plane instance is online in SSM yet; waited $((attempt * 10 / 60)) minutes."
             fi
-          done < <(jq -r '.[]' "${RUNNER_TEMP}/control-plane-ids.json")
-          : "${target:?No control-plane instance is online in SSM}"
+            sleep 10
+          done
+          if [[ -z "$target" ]]; then
+            echo "No control-plane instance became online in SSM after 10 minutes." >&2
+            aws ssm describe-instance-information \
+              --query 'InstanceInformationList[].{InstanceId:InstanceId,PingStatus:PingStatus}' \
+              --output table >&2 || true
+            exit 1
+          fi
+          log "Using control-plane instance $target for the API tunnel."
 
+          log "Starting the SSM tunnel to Kubernetes API host $API_HOST."
           aws ssm start-session \
             --target "$target" \
             --document-name AWS-StartPortForwardingSessionToRemoteHost \
@@ -271,6 +296,7 @@ jobs:
             cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
             exit 1
           fi
+          log "SSM tunnel is listening on 127.0.0.1:6443."
 
           cluster=$(kubectl config view -o jsonpath='{.clusters[0].name}')
           if [[ -z "$cluster" ]]; then
@@ -281,11 +307,16 @@ jobs:
             --server=https://127.0.0.1:6443 \
             --tls-server-name="$API_HOST"
 
+          log "Waiting for the Kubernetes API readiness endpoint."
           api_ready=false
-          for _ in $(seq 1 120); do
+          for attempt in $(seq 1 120); do
             if kubectl get --raw=/readyz > /dev/null 2>&1; then
               api_ready=true
+              log "Kubernetes API is ready."
               break
+            fi
+            if (( attempt % 12 == 0 )); then
+              log "Kubernetes API is not ready yet; waited $((attempt * 10 / 60)) minutes."
             fi
             sleep 10
           done
@@ -303,6 +334,7 @@ jobs:
           sed -i "s/value: .*/value: $APP_HOST/" \
             "k8s/overlays/dev/kustomization.yaml"
 
+          log "Installing or upgrading ingress-nginx."
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -327,10 +359,13 @@ jobs:
           EOF
           done
 
+          log "Applying application manifests with image tag $IMAGE_TAG."
           kubectl apply -k k8s/overlays/dev
+          log "Waiting for application deployments to roll out."
           while IFS= read -r deployment; do
             kubectl -n online-boutique rollout status "$deployment" --timeout=15m
           done < <(kubectl -n online-boutique get deployments -o name)
+          log "Running the in-cluster frontend smoke test."
           kubectl -n online-boutique run deployment-smoke-test \
             --image=curlimages/curl:8.12.1 \
             --restart=Never \
@@ -339,11 +374,15 @@ jobs:
             -- curl --fail --silent --show-error http://frontend
           kubectl -n online-boutique get pods -o wide
 
+          log "Waiting for the ingress NLB hostname."
           ingress_address=""
-          for _ in $(seq 1 60); do
+          for attempt in $(seq 1 60); do
             ingress_address=$(kubectl -n ingress-nginx get service ingress-nginx-controller \
               -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
             [[ -n "$ingress_address" ]] && break
+            if (( attempt % 6 == 0 )); then
+              log "Ingress NLB hostname is pending; waited $((attempt * 10 / 60)) minutes."
+            fi
             sleep 10
           done
           if [[ -z "$ingress_address" ]]; then
@@ -351,6 +390,7 @@ jobs:
             kubectl -n ingress-nginx describe service ingress-nginx-controller >&2
             exit 1
           fi
+          log "Ingress NLB hostname is $ingress_address."
 
           change_batch=$(jq -n \
             --arg name "$APP_HOST" \
@@ -372,7 +412,9 @@ jobs:
             --change-batch "$change_batch" \
             --query ChangeInfo.Id \
             --output text)
+          log "Waiting for Route 53 change $change_id."
           aws route53 wait resource-record-sets-changed --id "$change_id"
+          log "Route 53 record for $APP_HOST is active."
 
           name_servers=$(jq -r 'join(", ")' "${RUNNER_TEMP}/route53-name-servers.json")
           {
