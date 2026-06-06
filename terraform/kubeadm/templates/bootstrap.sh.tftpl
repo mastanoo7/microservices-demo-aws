@@ -124,9 +124,25 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
   cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
   chown -R ubuntu:ubuntu /home/ubuntu/.kube
 
-  export KUBECONFIG=/etc/kubernetes/admin.conf
-  WORKER_JOIN=$(kubeadm token create --ttl 0 --print-join-command)
-  CERTIFICATE_KEY=$(kubeadm init phase upload-certs --upload-certs | tail -n 1)
+  # Avoid routing bootstrap API calls from the first control-plane node through
+  # the NLB back to itself. Keep admin.conf unchanged for external clients.
+  BOOTSTRAP_KUBECONFIG=/etc/kubernetes/bootstrap-admin.conf
+  cp /etc/kubernetes/admin.conf "$BOOTSTRAP_KUBECONFIG"
+  BOOTSTRAP_CLUSTER=$(kubectl --kubeconfig "$BOOTSTRAP_KUBECONFIG" \
+    config view -o jsonpath='{.clusters[0].name}')
+  kubectl --kubeconfig "$BOOTSTRAP_KUBECONFIG" config set-cluster "$BOOTSTRAP_CLUSTER" \
+    --server="https://$LOCAL_IP:6443"
+  export KUBECONFIG="$BOOTSTRAP_KUBECONFIG"
+
+  publish_status "running role=$ROLE index=$INDEX step=join-credentials"
+  create_worker_join() {
+    kubeadm token create --ttl 0 --print-join-command
+  }
+  upload_control_plane_certs() {
+    kubeadm init phase upload-certs --upload-certs | tail -n 1
+  }
+  WORKER_JOIN=$(retry 20 create_worker_join)
+  CERTIFICATE_KEY=$(retry 20 upload_control_plane_certs)
   CONTROL_PLANE_JOIN="$WORKER_JOIN --control-plane --certificate-key $CERTIFICATE_KEY"
 
   aws ssm put-parameter \
