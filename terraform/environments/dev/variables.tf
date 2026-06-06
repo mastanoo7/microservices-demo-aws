@@ -47,3 +47,15 @@ variable "api_access_cidrs" {
   type    = list(string)
   default = []
 }
+
+variable "domain_name" {
+  type        = string
+  description = "Public domain delegated to the Route 53 hosted zone."
+  default     = "cheppalimastan.online"
+}
+
+variable "app_hostname" {
+  type        = string
+  description = "Public hostname used by the dev application ingress."
+  default     = "dev.cheppalimastan.online"
+}

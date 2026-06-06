@@ -65,6 +65,13 @@ module "security" {
   tags   = local.tags
 }
 
+module "route53" {
+  source      = "../../route53"
+  zone_name   = var.domain_name
+  create_zone = true
+  tags        = local.tags
+}
+
 output "cluster_api_endpoint" {
   value = module.kubeadm.api_endpoint
 }
@@ -79,4 +86,16 @@ output "worker_autoscaling_group_name" {
 
 output "control_plane_instance_ids" {
   value = module.kubeadm.control_plane_instance_ids
+}
+
+output "route53_zone_id" {
+  value = module.route53.zone_id
+}
+
+output "route53_name_servers" {
+  value = module.route53.name_servers
+}
+
+output "app_hostname" {
+  value = var.app_hostname
 }

@@ -8,7 +8,7 @@ on:
         type: string
         required: false
       build-images:
-        description: Build, scan, sign, and push service images
+        description: Build, sign, and push service images
         type: boolean
         default: true
       deploy-application:
@@ -22,7 +22,7 @@ on:
         type: string
         required: false
       build-images:
-        description: Build, scan, sign, and push service images
+        description: Build, sign, and push service images
         type: boolean
         default: true
       deploy-application:
@@ -151,7 +151,6 @@ jobs:
       TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       KUBECONFIG: /tmp/online-boutique-kubeconfig
-      APP_HOST: ${{ vars.APP_HOST }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -187,29 +186,46 @@ jobs:
             -backend-config="encrypt=true"
           endpoint=$(terraform -chdir=terraform/environments/dev output -raw cluster_api_endpoint)
           parameter=$(terraform -chdir=terraform/environments/dev output -raw kubeconfig_ssm_parameter)
+          app_hostname=$(terraform -chdir=terraform/environments/dev output -raw app_hostname)
+          route53_zone_id=$(terraform -chdir=terraform/environments/dev output -raw route53_zone_id)
           terraform -chdir=terraform/environments/dev output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
+          terraform -chdir=terraform/environments/dev output -json route53_name_servers > "${RUNNER_TEMP}/route53-name-servers.json"
           echo "api-host=${endpoint#https://}" | sed 's/:6443$//' >> "$GITHUB_OUTPUT"
           echo "parameter=$parameter" >> "$GITHUB_OUTPUT"
+          echo "app-hostname=$app_hostname" >> "$GITHUB_OUTPUT"
+          echo "route53-zone-id=$route53_zone_id" >> "$GITHUB_OUTPUT"
       - name: Connect and deploy
         shell: bash
         env:
           API_HOST: ${{ steps.cluster.outputs.api-host }}
           KUBECONFIG_PARAMETER: ${{ steps.cluster.outputs.parameter }}
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          APP_HOST: ${{ steps.cluster.outputs.app-hostname }}
+          ROUTE53_ZONE_ID: ${{ steps.cluster.outputs.route53-zone-id }}
         run: |
           set -euo pipefail
 
+          kubeconfig_ready=false
           for _ in $(seq 1 120); do
             if aws ssm get-parameter \
               --name "$KUBECONFIG_PARAMETER" \
               --with-decryption \
               --query Parameter.Value \
               --output text > "$KUBECONFIG" 2>/dev/null; then
+              kubeconfig_ready=true
               break
             fi
             sleep 15
           done
-          test -s "$KUBECONFIG"
+          if [[ "$kubeconfig_ready" != "true" || ! -s "$KUBECONFIG" ]]; then
+            echo "Kubeconfig was not available in SSM parameter $KUBECONFIG_PARAMETER after 30 minutes." >&2
+            aws ssm get-parameter \
+              --name "$KUBECONFIG_PARAMETER" \
+              --with-decryption \
+              --query Parameter.ARN \
+              --output text || true
+            exit 1
+          fi
           chmod 600 "$KUBECONFIG"
 
           target=""
@@ -233,25 +249,51 @@ jobs:
           tunnel_pid=$!
           trap 'kill "$tunnel_pid" 2>/dev/null || true' EXIT
 
+          tunnel_ready=false
           for _ in $(seq 1 60); do
-            nc -z 127.0.0.1 6443 && break
+            if nc -z 127.0.0.1 6443; then
+              tunnel_ready=true
+              break
+            fi
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              echo "SSM port-forwarding session exited before the API tunnel became ready." >&2
+              cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
+              exit 1
+            fi
             sleep 2
           done
-          nc -z 127.0.0.1 6443
+          if [[ "$tunnel_ready" != "true" ]]; then
+            echo "Timed out waiting for the Kubernetes API SSM tunnel on 127.0.0.1:6443." >&2
+            cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
+            exit 1
+          fi
 
           cluster=$(kubectl config view -o jsonpath='{.clusters[0].name}')
+          if [[ -z "$cluster" ]]; then
+            echo "The kubeconfig from $KUBECONFIG_PARAMETER contains no cluster entry." >&2
+            exit 1
+          fi
           kubectl config set-cluster "$cluster" \
             --server=https://127.0.0.1:6443 \
             --tls-server-name="$API_HOST"
 
+          api_ready=false
           for _ in $(seq 1 120); do
-            kubectl get --raw=/readyz > /dev/null 2>&1 && break
+            if kubectl get --raw=/readyz > /dev/null 2>&1; then
+              api_ready=true
+              break
+            fi
             sleep 10
           done
-          kubectl get --raw=/readyz
+          if [[ "$api_ready" != "true" ]]; then
+            echo "Kubernetes API did not become ready through the SSM tunnel after 20 minutes." >&2
+            kubectl cluster-info >&2 || true
+            kubectl get --raw=/readyz?verbose >&2 || true
+            exit 1
+          fi
 
           if [[ ! "$APP_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
-            echo "APP_HOST must be configured as a DNS hostname in the GitHub environment" >&2
+            echo "APP_HOST must be a DNS hostname. Current value: '$APP_HOST'." >&2
             exit 1
           fi
           sed -i "s/value: .*/value: $APP_HOST/" \
@@ -293,13 +335,48 @@ jobs:
             -- curl --fail --silent --show-error http://frontend
           kubectl -n online-boutique get pods -o wide
 
-          ingress_address=$(kubectl -n ingress-nginx get service ingress-nginx-controller \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          ingress_address=""
+          for _ in $(seq 1 60); do
+            ingress_address=$(kubectl -n ingress-nginx get service ingress-nginx-controller \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            [[ -n "$ingress_address" ]] && break
+            sleep 10
+          done
+          if [[ -z "$ingress_address" ]]; then
+            echo "Ingress NLB hostname was not assigned after 10 minutes." >&2
+            kubectl -n ingress-nginx describe service ingress-nginx-controller >&2
+            exit 1
+          fi
+
+          change_batch=$(jq -n \
+            --arg name "$APP_HOST" \
+            --arg value "$ingress_address" \
+            '{
+              Comment: "Managed by the online-boutique dev deployment workflow",
+              Changes: [{
+                Action: "UPSERT",
+                ResourceRecordSet: {
+                  Name: $name,
+                  Type: "CNAME",
+                  TTL: 60,
+                  ResourceRecords: [{Value: $value}]
+                }
+              }]
+            }')
+          change_id=$(aws route53 change-resource-record-sets \
+            --hosted-zone-id "$ROUTE53_ZONE_ID" \
+            --change-batch "$change_batch" \
+            --query ChangeInfo.Id \
+            --output text)
+          aws route53 wait resource-record-sets-changed --id "$change_id"
+
+          name_servers=$(jq -r 'join(", ")' "${RUNNER_TEMP}/route53-name-servers.json")
           {
             echo "## Deployment"
             echo
             echo "- Environment: dev"
             echo "- Image tag: \`$IMAGE_TAG\`"
             echo "- Application host: \`$APP_HOST\`"
-            echo "- Ingress load balancer: \`${ingress_address:-pending}\`"
+            echo "- Ingress load balancer: \`$ingress_address\`"
+            echo "- Route 53 nameservers: \`$name_servers\`"
           } >> "$GITHUB_STEP_SUMMARY"

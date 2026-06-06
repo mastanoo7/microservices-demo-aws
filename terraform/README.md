@@ -32,6 +32,8 @@ worker_min_size             = 3
 worker_desired_size         = 3
 worker_max_size             = 20
 api_access_cidrs            = ["10.0.0.0/8"]
+domain_name                 = "cheppalimastan.online"
+app_hostname                = "dev.cheppalimastan.online"
 ```
 
 ```powershell

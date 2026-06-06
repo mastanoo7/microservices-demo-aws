@@ -123,7 +123,6 @@ Add these environment **Variables**:
 | Name | Example |
 |---|---|
 | `AWS_REGION` | `us-east-1` |
-| `APP_HOST` | `dev.shop.example.com` |
 
 Add these environment **Secrets**:
 
@@ -145,6 +144,8 @@ worker_min_size             = 1
 worker_desired_size         = 2
 worker_max_size             = 6
 api_access_cidrs            = []
+domain_name                 = "cheppalimastan.online"
+app_hostname                = "dev.cheppalimastan.online"
 ```
 
 Keep `api_access_cidrs` empty. GitHub Actions reaches the private Kubernetes API
@@ -213,21 +214,36 @@ The workflow:
 
 The first deployment may take 20-40 minutes.
 
-## 7. Configure DNS
+## 7. Delegate GoDaddy DNS to Route 53
 
-The deployment summary reports the ingress NLB hostname. Point `APP_HOST` to it:
+Terraform creates a public Route 53 hosted zone for
+`cheppalimastan.online`. The deployment workflow then creates or updates the
+`dev.cheppalimastan.online` CNAME record automatically after the ingress NLB is
+available.
 
-```text
-dev.shop.example.com -> generated-nlb-hostname.elb.amazonaws.com
-```
+After the first Terraform apply, open the GitHub deployment summary and copy
+the four Route 53 nameservers. In GoDaddy:
 
-Validate:
+1. Open **My Products** and select `cheppalimastan.online`.
+2. Open **DNS**, then **Nameservers**.
+3. Choose **Change Nameservers** and **Enter my own nameservers**.
+4. Replace the existing GoDaddy nameservers with all four Route 53 nameservers.
+5. Save and confirm the change.
+
+Do not add a separate GoDaddy `CNAME` record after delegation. Route 53 becomes
+the authoritative DNS provider. Nameserver propagation can take up to 48 hours,
+although it is often much faster.
+
+Validate delegation and the application record:
 
 ```bash
-curl -I http://dev.shop.example.com
+nslookup -type=NS cheppalimastan.online
+nslookup dev.cheppalimastan.online
+curl -I http://dev.cheppalimastan.online
 ```
 
-TLS is not installed automatically.
+TLS is not installed automatically, so use HTTP until cert-manager or another
+certificate solution is configured.
 
 ## 8. Application-Only Release
 
@@ -269,7 +285,6 @@ images. It does not delete the external state bucket or lock table.
 ```text
 [ ] dev GitHub Environment exists
 [ ] AWS_REGION variable exists
-[ ] APP_HOST variable exists
 [ ] AWS_GITHUB_ROLE_ARN secret exists
 [ ] TF_STATE_BUCKET secret exists
 [ ] TF_LOCK_TABLE secret exists
@@ -279,7 +294,9 @@ images. It does not delete the external state bucket or lock table.
 [ ] DynamoDB table uses LockID as the partition key
 [ ] AWS role can manage Terraform resources
 [ ] AWS role can push ECR images
+[ ] AWS role can manage the Route 53 hosted zone and records
 [ ] AWS role can use SSM GetParameter and StartSession
+[ ] GoDaddy nameservers match the four Route 53 nameservers
 [ ] CI passes
 ```
 
