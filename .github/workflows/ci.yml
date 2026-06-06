@@ -140,9 +140,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Render Kustomize overlay
-        run: kubectl kustomize k8s/overlays/dev > /tmp/rendered.yaml
+        run: kubectl kustomize k8s/overlays/dev > rendered.yaml
       - name: Validate rendered YAML
-        run: kubectl apply --dry-run=client --validate=false -f /tmp/rendered.yaml
+        uses: docker://ghcr.io/yannh/kubeconform:v0.8.0
+        with:
+          entrypoint: /kubeconform
+          args: >-
+            -strict
+            -summary
+            -kubernetes-version 1.35.0
+            /github/workspace/rendered.yaml
 
   helm:
     name: Helm charts
