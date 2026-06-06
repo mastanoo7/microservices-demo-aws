@@ -112,6 +112,9 @@ jobs:
     name: Build ${{ matrix.service }}
     if: inputs.build-images
     needs: infrastructure
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
