@@ -26,6 +26,7 @@ jobs:
 
   yaml:
     name: YAML syntax
+    needs: workflows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +53,7 @@ jobs:
   terraform:
     name: Terraform plan (dev)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: yaml
     runs-on: ubuntu-latest
     environment: dev
     permissions:
@@ -133,6 +135,7 @@ jobs:
 
   kubernetes:
     name: Kubernetes (dev)
+    needs: terraform
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,6 +146,7 @@ jobs:
 
   helm:
     name: Helm charts
+    needs: kubernetes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -158,6 +162,7 @@ jobs:
 
   images:
     name: Image (${{ matrix.service }})
+    needs: helm
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -193,3 +198,14 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+
+  deploy-dev:
+    name: Apply and deploy dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: images
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image-tag: ${{ github.sha }}
+      build-images: true
+      deploy-application: true
+    secrets: inherit

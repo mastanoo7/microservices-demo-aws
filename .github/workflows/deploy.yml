@@ -1,6 +1,20 @@
 name: Deploy platform
 
 on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Immutable application image tag
+        type: string
+        required: false
+      build-images:
+        description: Build, scan, sign, and push service images
+        type: boolean
+        default: true
+      deploy-application:
+        description: Deploy the Kubernetes application after infrastructure
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       image-tag:

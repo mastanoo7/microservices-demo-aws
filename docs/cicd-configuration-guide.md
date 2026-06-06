@@ -4,10 +4,22 @@ This repository currently deploys only `dev`.
 
 ## Workflow Order
 
-1. `CI` validates the repository and plans dev infrastructure.
-2. `Deploy platform` provisions AWS, publishes images, and deploys the app.
-3. `Build and publish services` handles later image-only releases.
-4. `Destroy platform` removes dev after explicit confirmation.
+The `CI` jobs have explicit dependencies:
+
+1. GitHub Actions validation
+2. YAML validation
+3. Terraform plan for dev
+4. Dev Kubernetes manifest validation
+5. Helm validation
+6. Service image build and vulnerability scan
+7. On a successful push to `main`, call `Deploy platform`
+8. Terraform apply
+9. ECR image build, scan, push, and signing
+10. Kubernetes deployment and smoke test
+
+Pull requests stop after validation and Terraform plan. They never apply.
+`Build and publish services` remains available for image-only releases, and
+`Destroy platform` removes dev after explicit confirmation.
 
 ## 1. Create Terraform State Storage
 
@@ -166,19 +178,26 @@ Open a pull request into `main`.
 6. Helm lint and template rendering
 7. Container builds and Trivy scanning
 
-Terraform CI never applies changes. Fork pull requests do not receive
-environment secrets, so their authenticated Terraform plan is skipped.
+On pull requests, Terraform only plans and never applies. Fork pull requests do
+not receive environment secrets, so the authenticated Terraform stage and its
+dependent stages are skipped.
+
+After merge, the push to `main` repeats the ordered checks. If every check
+succeeds, CI invokes `Deploy platform`. That workflow applies Terraform,
+publishes signed images, deploys Kubernetes workloads, and runs the smoke test.
+A failed stage prevents every dependent stage from running.
 
 ## 6. Run the First Deployment
 
-After CI succeeds and the change is merged:
+Merge the validated pull request into `main`. CI automatically calls
+`Deploy platform` with:
 
-1. Open **Actions > Deploy platform**.
-2. Choose `main`.
-3. Leave `image-tag` empty to use the commit SHA.
-4. Keep `build-images` enabled.
-5. Keep `deploy-application` enabled.
-6. Run the workflow.
+- `image-tag`: merged commit SHA
+- `build-images`: enabled
+- `deploy-application`: enabled
+
+The manual **Deploy platform** workflow remains available for retries,
+infrastructure-only changes, application-only deployment, and rollback.
 
 The workflow:
 
