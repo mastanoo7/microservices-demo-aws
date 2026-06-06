@@ -398,13 +398,29 @@ resource "aws_instance" "control_plane" {
     # bootstrap-sha256: ${local.bootstrap_script_sha256}
     export DEBIAN_FRONTEND=noninteractive
     for attempt in $(seq 1 20); do
-      apt-get update && apt-get install -y awscli && break
+      apt-get update && apt-get install -y ca-certificates curl unzip && break
       if [ "$attempt" -eq 20 ]; then
-        echo "Failed to install awscli after 20 attempts." >&2
+        echo "Failed to install AWS CLI prerequisites after 20 attempts." >&2
         exit 1
       fi
       sleep 15
     done
+    if ! command -v aws >/dev/null 2>&1; then
+      for attempt in $(seq 1 20); do
+        rm -rf /tmp/aws /tmp/awscliv2.zip
+        if curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip &&
+          unzip -q /tmp/awscliv2.zip -d /tmp &&
+          /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli; then
+          break
+        fi
+        if [ "$attempt" -eq 20 ]; then
+          echo "Failed to install AWS CLI v2 after 20 attempts." >&2
+          exit 1
+        fi
+        sleep 15
+      done
+    fi
+    aws --version
     aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap control-plane ${count.index}
@@ -456,13 +472,29 @@ resource "aws_launch_template" "worker" {
     # bootstrap-sha256: ${local.bootstrap_script_sha256}
     export DEBIAN_FRONTEND=noninteractive
     for attempt in $(seq 1 20); do
-      apt-get update && apt-get install -y awscli && break
+      apt-get update && apt-get install -y ca-certificates curl unzip && break
       if [ "$attempt" -eq 20 ]; then
-        echo "Failed to install awscli after 20 attempts." >&2
+        echo "Failed to install AWS CLI prerequisites after 20 attempts." >&2
         exit 1
       fi
       sleep 15
     done
+    if ! command -v aws >/dev/null 2>&1; then
+      for attempt in $(seq 1 20); do
+        rm -rf /tmp/aws /tmp/awscliv2.zip
+        if curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip &&
+          unzip -q /tmp/awscliv2.zip -d /tmp &&
+          /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli; then
+          break
+        fi
+        if [ "$attempt" -eq 20 ]; then
+          echo "Failed to install AWS CLI v2 after 20 attempts." >&2
+          exit 1
+        fi
+        sleep 15
+      done
+    fi
+    aws --version
     aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap worker 0

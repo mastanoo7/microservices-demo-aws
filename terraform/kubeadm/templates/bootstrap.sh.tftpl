@@ -84,7 +84,7 @@ sysctl --system
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y apt-transport-https ca-certificates curl gpg containerd awscli
+apt-get install -y apt-transport-https ca-certificates curl gpg containerd
 
 mkdir -p /etc/containerd
 containerd config default >/etc/containerd/config.toml
