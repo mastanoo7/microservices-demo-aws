@@ -298,6 +298,17 @@ Verify `TF_STATE_BUCKET`, `TF_LOCK_TABLE`, `AWS_REGION`, and state permissions.
 
 Run the complete deployment first. Terraform creates ECR before image jobs.
 
+### A previous payment secret is scheduled for deletion
+
+The current Terraform name is:
+
+```text
+online-boutique-dev-payment-api-key
+```
+
+The old `/online-boutique/dev/payment/api-key` secret may remain visible while
+AWS completes its recovery window, but it no longer blocks deployment.
+
 ### Kubeconfig parameter times out
 
 Inspect `/var/log/kubeadm-bootstrap.log` on the first control-plane node and

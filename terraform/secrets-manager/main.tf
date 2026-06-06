@@ -8,8 +8,9 @@ variable "tags" {
 }
 
 resource "aws_secretsmanager_secret" "payment" {
-  name = "/online-boutique/${var.environment}/payment/api-key"
-  tags = var.tags
+  name                    = "online-boutique-${var.environment}-payment-api-key"
+  recovery_window_in_days = 0
+  tags                    = var.tags
 }
 
 resource "aws_secretsmanager_secret_version" "payment_placeholder" {

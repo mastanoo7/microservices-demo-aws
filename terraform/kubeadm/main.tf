@@ -402,7 +402,7 @@ resource "aws_instance" "control_plane" {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 2
-    instance_metadata_tags      = "enabled"
+    instance_metadata_tags      = "disabled"
   }
 
   root_block_device {
@@ -461,7 +461,7 @@ resource "aws_launch_template" "worker" {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 2
-    instance_metadata_tags      = "enabled"
+    instance_metadata_tags      = "disabled"
   }
 
   block_device_mappings {
