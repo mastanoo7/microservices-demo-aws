@@ -12,14 +12,14 @@ variable "tags" {
   default = {}
 }
 
-resource "aws_cloudwatch_log_group" "eks" {
-  name              = "/aws/eks/${var.cluster_name}/cluster"
+resource "aws_cloudwatch_log_group" "control_plane" {
+  name              = "/kubernetes/${var.cluster_name}/control-plane"
   retention_in_days = var.retention_days
   tags              = var.tags
 }
 
 resource "aws_cloudwatch_log_group" "apps" {
-  name              = "/eks/${var.cluster_name}/online-boutique"
+  name              = "/kubernetes/${var.cluster_name}/online-boutique"
   retention_in_days = var.retention_days
   tags              = var.tags
 }

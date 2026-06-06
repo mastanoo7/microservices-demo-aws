@@ -1,23 +1,294 @@
-name: deploy
+name: Deploy platform
+
 on:
   workflow_dispatch:
     inputs:
       environment:
+        description: Target GitHub environment
         type: choice
         options: [dev, qa, stage, prod]
         required: true
+      image-tag:
+        description: Immutable application image tag; defaults to this commit SHA
+        type: string
+        required: false
+      build-images:
+        description: Build, scan, sign, and push service images
+        type: boolean
+        default: true
+      deploy-application:
+        description: Deploy the Kubernetes application after infrastructure
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: 1.8.5
+
 jobs:
-  terraform-apply:
+  infrastructure:
+    name: Terraform apply
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    permissions: { id-token: write, contents: read }
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      aws-region: ${{ steps.metadata.outputs.aws-region }}
+      image-tag: ${{ steps.metadata.outputs.image-tag }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+      TFVARS: ${{ secrets.TFVARS }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-        with: { terraform_version: 1.8.5 }
-      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
-          aws-region: us-east-1
-      - run: terraform -chdir=terraform/environments/${{ inputs.environment }} init
-      - run: terraform -chdir=terraform/environments/${{ inputs.environment }} apply -auto-approve
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gha-${{ inputs.environment }}-terraform
+      - name: Resolve deployment metadata
+        id: metadata
+        shell: bash
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "aws-region=${AWS_REGION:-us-east-1}"
+            echo "image-tag=${INPUT_IMAGE_TAG:-${GITHUB_SHA}}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Validate environment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${TF_STATE_BUCKET:?Configure TF_STATE_BUCKET in the GitHub environment}"
+          : "${TF_LOCK_TABLE:?Configure TF_LOCK_TABLE in the GitHub environment}"
+      - name: Write optional Terraform variables
+        if: env.TFVARS != ''
+        shell: bash
+        run: printf '%s\n' "$TFVARS" > "${RUNNER_TEMP}/environment.tfvars"
+      - name: Terraform init
+        shell: bash
+        run: |
+          terraform -chdir=terraform/environments/${{ inputs.environment }} init \
+            -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=online-boutique/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION:-us-east-1}" \
+            -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+            -backend-config="encrypt=true"
+      - name: Terraform plan
+        shell: bash
+        run: |
+          args=(-input=false -out=tfplan)
+          if [[ -s "${RUNNER_TEMP}/environment.tfvars" ]]; then
+            args+=("-var-file=${RUNNER_TEMP}/environment.tfvars")
+          fi
+          terraform -chdir=terraform/environments/${{ inputs.environment }} plan "${args[@]}"
+      - name: Terraform apply
+        run: terraform -chdir=terraform/environments/${{ inputs.environment }} apply -input=false -auto-approve tfplan
+
+  build-images:
+    name: Build ${{ matrix.service }}
+    if: inputs.build-images
+    needs: infrastructure
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - adservice
+          - cartservice
+          - checkoutservice
+          - currencyservice
+          - emailservice
+          - frontend
+          - paymentservice
+          - productcatalogservice
+          - recommendationservice
+          - shippingservice
+    uses: ./.github/workflows/reusable-build-service.yml
+    with:
+      service: ${{ matrix.service }}
+      environment: ${{ inputs.environment }}
+      aws-region: ${{ needs.infrastructure.outputs.aws-region }}
+      image-tag: ${{ needs.infrastructure.outputs.image-tag }}
+    secrets: inherit
+
+  deploy-application:
+    name: Deploy Kubernetes workloads
+    if: always() && inputs.deploy-application && needs.infrastructure.result == 'success' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')
+    needs: [infrastructure, build-images]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ needs.infrastructure.outputs.aws-region }}
+      IMAGE_TAG: ${{ needs.infrastructure.outputs.image-tag }}
+      TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+      KUBECONFIG: /tmp/online-boutique-kubeconfig
+      APP_HOST: ${{ vars.APP_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ inputs.environment }}-kubernetes
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - uses: azure/setup-helm@v4
+      - name: Install Session Manager plugin
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            --output "${RUNNER_TEMP}/session-manager-plugin.deb"
+          sudo dpkg -i "${RUNNER_TEMP}/session-manager-plugin.deb"
+      - name: Read Terraform outputs
+        id: cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/environments/${{ inputs.environment }} init \
+            -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=online-boutique/${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+            -backend-config="encrypt=true"
+          endpoint=$(terraform -chdir=terraform/environments/${{ inputs.environment }} output -raw cluster_api_endpoint)
+          parameter=$(terraform -chdir=terraform/environments/${{ inputs.environment }} output -raw kubeconfig_ssm_parameter)
+          terraform -chdir=terraform/environments/${{ inputs.environment }} output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
+          echo "api-host=${endpoint#https://}" | sed 's/:6443$//' >> "$GITHUB_OUTPUT"
+          echo "parameter=$parameter" >> "$GITHUB_OUTPUT"
+      - name: Connect and deploy
+        shell: bash
+        env:
+          API_HOST: ${{ steps.cluster.outputs.api-host }}
+          KUBECONFIG_PARAMETER: ${{ steps.cluster.outputs.parameter }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          for _ in $(seq 1 120); do
+            if aws ssm get-parameter \
+              --name "$KUBECONFIG_PARAMETER" \
+              --with-decryption \
+              --query Parameter.Value \
+              --output text > "$KUBECONFIG" 2>/dev/null; then
+              break
+            fi
+            sleep 15
+          done
+          test -s "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+
+          target=""
+          while IFS= read -r instance_id; do
+            status=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$instance_id" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)
+            if [[ "$status" == "Online" ]]; then
+              target="$instance_id"
+              break
+            fi
+          done < <(jq -r '.[]' "${RUNNER_TEMP}/control-plane-ids.json")
+          : "${target:?No control-plane instance is online in SSM}"
+
+          aws ssm start-session \
+            --target "$target" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"$API_HOST\"],\"portNumber\":[\"6443\"],\"localPortNumber\":[\"6443\"]}" \
+            > "${RUNNER_TEMP}/ssm-tunnel.log" 2>&1 &
+          tunnel_pid=$!
+          trap 'kill "$tunnel_pid" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 60); do
+            nc -z 127.0.0.1 6443 && break
+            sleep 2
+          done
+          nc -z 127.0.0.1 6443
+
+          cluster=$(kubectl config view -o jsonpath='{.clusters[0].name}')
+          kubectl config set-cluster "$cluster" \
+            --server=https://127.0.0.1:6443 \
+            --tls-server-name="$API_HOST"
+
+          for _ in $(seq 1 120); do
+            kubectl get --raw=/readyz > /dev/null 2>&1 && break
+            sleep 10
+          done
+          kubectl get --raw=/readyz
+
+          if [[ ! "$APP_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo "APP_HOST must be configured as a DNS hostname in the GitHub environment" >&2
+            exit 1
+          fi
+          sed -i "s/value: .*/value: $APP_HOST/" \
+            "k8s/overlays/${{ inputs.environment }}/kustomization.yaml"
+
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --create-namespace \
+            --version 4.14.3 \
+            --set controller.replicaCount=2 \
+            --set controller.service.externalTrafficPolicy=Local \
+            --set-string controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type=nlb \
+            --set-string controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme=internet-facing \
+            --wait \
+            --timeout 10m
+
+          cat >> "k8s/overlays/${{ inputs.environment }}/kustomization.yaml" <<EOF
+          images:
+          EOF
+          for service in adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
+            cat >> "k8s/overlays/${{ inputs.environment }}/kustomization.yaml" <<EOF
+            - name: public.ecr.aws/online-boutique/$service
+              newName: $ECR_REGISTRY/online-boutique/$service
+              newTag: $IMAGE_TAG
+          EOF
+          done
+
+          kubectl apply -k "k8s/overlays/${{ inputs.environment }}"
+          while IFS= read -r deployment; do
+            kubectl -n online-boutique rollout status "$deployment" --timeout=15m
+          done < <(kubectl -n online-boutique get deployments -o name)
+          kubectl -n online-boutique run deployment-smoke-test \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            --rm \
+            --attach \
+            -- curl --fail --silent --show-error http://frontend
+          kubectl -n online-boutique get pods -o wide
+
+          ingress_address=$(kubectl -n ingress-nginx get service ingress-nginx-controller \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          {
+            echo "## Deployment"
+            echo
+            echo "- Environment: ${{ inputs.environment }}"
+            echo "- Image tag: \`$IMAGE_TAG\`"
+            echo "- Application host: \`$APP_HOST\`"
+            echo "- Ingress load balancer: \`${ingress_address:-pending}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

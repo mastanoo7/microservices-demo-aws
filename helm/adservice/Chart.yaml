@@ -1,6 +1,6 @@
 apiVersion: v2
 name: adservice
-description: Online Boutique adservice service chart for AWS EKS
+description: Online Boutique adservice chart for Kubernetes on AWS
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

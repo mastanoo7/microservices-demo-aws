@@ -1,0 +1,173 @@
+#!/bin/bash
+set -euo pipefail
+exec > >(tee -a /var/log/kubeadm-bootstrap.log) 2>&1
+
+ROLE="$1"
+INDEX="$2"
+CLUSTER_NAME="${cluster_name}"
+KUBERNETES_VERSION="${kubernetes_version}"
+POD_CIDR="${pod_cidr}"
+SERVICE_CIDR="${service_cidr}"
+API_ENDPOINT="${api_endpoint}:6443"
+AWS_REGION="${region}"
+PARAMETER_PREFIX="${parameter_prefix}"
+BOOTSTRAP_BUCKET="${bootstrap_bucket}"
+CALICO_VERSION="${calico_version}"
+METRICS_SERVER_VERSION="${metrics_server_version}"
+
+retry() {
+  local attempts="$1"
+  shift
+  local delay=15
+  for attempt in $(seq 1 "$attempts"); do
+    "$@" && return 0
+    echo "Attempt $attempt failed; retrying in $delay seconds" >&2
+    sleep "$delay"
+  done
+  return 1
+}
+
+imds() {
+  local path="$1"
+  local token
+  token=$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+    http://169.254.169.254/latest/api/token)
+  curl -fsS -H "X-aws-ec2-metadata-token: $token" \
+    "http://169.254.169.254/latest/$path"
+}
+
+INSTANCE_ID=$(imds meta-data/instance-id)
+LOCAL_IP=$(imds meta-data/local-ipv4)
+AZ=$(imds meta-data/placement/availability-zone)
+PROVIDER_ID="aws:///$AZ/$INSTANCE_ID"
+NODE_NAME="$INSTANCE_ID"
+
+swapoff -a
+sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+
+cat >/etc/modules-load.d/kubernetes.conf <<EOF
+overlay
+br_netfilter
+EOF
+modprobe overlay
+modprobe br_netfilter
+
+cat >/etc/sysctl.d/99-kubernetes.conf <<EOF
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+sysctl --system
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y apt-transport-https ca-certificates curl gpg containerd awscli
+
+mkdir -p /etc/containerd
+containerd config default >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl enable --now containerd
+
+mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL "https://pkgs.k8s.io/core:/stable:/v$KUBERNETES_VERSION/deb/Release.key" \
+  | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$KUBERNETES_VERSION/deb/ /" \
+  >/etc/apt/sources.list.d/kubernetes.list
+apt-get update
+apt-get install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+
+cat >/etc/default/kubelet <<EOF
+KUBELET_EXTRA_ARGS=--cloud-provider=external --provider-id=$PROVIDER_ID --node-ip=$LOCAL_IP
+EOF
+if [[ "$ROLE" == "worker" ]]; then
+  sed -i 's/$/ --node-labels=workload=application/' /etc/default/kubelet
+fi
+systemctl enable kubelet
+
+if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
+  kubeadm init \
+    --control-plane-endpoint "$API_ENDPOINT" \
+    --apiserver-advertise-address "$LOCAL_IP" \
+    --pod-network-cidr "$POD_CIDR" \
+    --service-cidr "$SERVICE_CIDR" \
+    --node-name "$NODE_NAME" \
+    --cri-socket unix:///run/containerd/containerd.sock \
+    --upload-certs
+
+  mkdir -p /root/.kube /home/ubuntu/.kube
+  cp /etc/kubernetes/admin.conf /root/.kube/config
+  cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+  chown -R ubuntu:ubuntu /home/ubuntu/.kube
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+  WORKER_JOIN=$(kubeadm token create --ttl 0 --print-join-command)
+  CERTIFICATE_KEY=$(kubeadm init phase upload-certs --upload-certs | tail -n 1)
+  CONTROL_PLANE_JOIN="$WORKER_JOIN --control-plane --certificate-key $CERTIFICATE_KEY"
+
+  aws ssm put-parameter \
+    --region "$AWS_REGION" \
+    --name "$PARAMETER_PREFIX/worker-join" \
+    --type SecureString \
+    --value "$WORKER_JOIN" \
+    --overwrite
+  aws ssm put-parameter \
+    --region "$AWS_REGION" \
+    --name "$PARAMETER_PREFIX/control-plane-join" \
+    --type SecureString \
+    --value "$CONTROL_PLANE_JOIN" \
+    --overwrite
+  aws ssm put-parameter \
+    --region "$AWS_REGION" \
+    --name "$PARAMETER_PREFIX/admin-kubeconfig" \
+    --type SecureString \
+    --tier Advanced \
+    --value "$(cat /etc/kubernetes/admin.conf)" \
+    --overwrite
+
+  kubectl create -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
+  curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml" \
+    | sed "s#192.168.0.0/16#$POD_CIDR#g" \
+    | kubectl create -f -
+
+  aws s3 cp "s3://$BOOTSTRAP_BUCKET/addons/aws-cloud-controller-manager.yaml" /tmp/aws-ccm.yaml
+  kubectl apply -f /tmp/aws-ccm.yaml
+
+  kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/$METRICS_SERVER_VERSION/high-availability-1.21+.yaml"
+  kubectl -n kube-system patch deployment metrics-server --type=json \
+    -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+  aws s3 cp "s3://$BOOTSTRAP_BUCKET/addons/cluster-autoscaler.yaml" /tmp/cluster-autoscaler.yaml
+  kubectl apply -f /tmp/cluster-autoscaler.yaml
+  kubectl -n kube-system annotate deployment cluster-autoscaler \
+    cluster-autoscaler.kubernetes.io/safe-to-evict="false" --overwrite
+elif [[ "$ROLE" == "control-plane" ]]; then
+  get_control_plane_join() {
+    aws ssm get-parameter \
+      --region "$AWS_REGION" \
+      --name "$PARAMETER_PREFIX/control-plane-join" \
+      --with-decryption \
+      --query Parameter.Value \
+      --output text
+  }
+  CONTROL_PLANE_JOIN=$(retry 80 get_control_plane_join)
+  retry 20 bash -c "$CONTROL_PLANE_JOIN --node-name $NODE_NAME --apiserver-advertise-address $LOCAL_IP --cri-socket unix:///run/containerd/containerd.sock"
+  mkdir -p /root/.kube /home/ubuntu/.kube
+  cp /etc/kubernetes/admin.conf /root/.kube/config
+  cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+  chown -R ubuntu:ubuntu /home/ubuntu/.kube
+else
+  get_worker_join() {
+    aws ssm get-parameter \
+      --region "$AWS_REGION" \
+      --name "$PARAMETER_PREFIX/worker-join" \
+      --with-decryption \
+      --query Parameter.Value \
+      --output text
+  }
+  WORKER_JOIN=$(retry 80 get_worker_join)
+  retry 20 bash -c "$WORKER_JOIN --node-name $NODE_NAME --cri-socket unix:///run/containerd/containerd.sock"
+  kubectl --kubeconfig /etc/kubernetes/kubelet.conf label node "$NODE_NAME" workload=application --overwrite || true
+fi
+
+echo "kubeadm bootstrap completed for $ROLE $INSTANCE_ID"

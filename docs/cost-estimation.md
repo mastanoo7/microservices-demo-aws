@@ -22,4 +22,6 @@ These are planning estimates and exclude application-specific data transfer spik
 
 ## Largest Cost Drivers
 
-EKS control plane, EC2 nodes, NAT gateways, OpenSearch, CloudWatch log ingestion, data transfer, and persistent storage are the primary drivers.
+Control-plane and worker EC2 instances, API and application load balancers, NAT
+gateways, OpenSearch, CloudWatch ingestion, data transfer, and persistent storage
+are the primary drivers.

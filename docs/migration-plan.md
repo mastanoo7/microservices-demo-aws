@@ -12,8 +12,9 @@
 
 1. Create S3 state bucket and DynamoDB lock table.
 2. Deploy VPC, subnets, endpoints, NAT gateways, and security groups.
-3. Deploy EKS managed control plane and managed node groups.
-4. Install EBS CSI, EFS CSI, AWS Load Balancer Controller, External DNS, cert-manager, External Secrets Operator, and Karpenter.
+3. Deploy the kubeadm control plane behind an internal NLB.
+4. Deploy worker Launch Templates and Auto Scaling Groups, then install Calico,
+   AWS Cloud Controller Manager, Metrics Server, and Cluster Autoscaler.
 
 ## Phase 3: Platform Services
 
@@ -42,15 +43,15 @@
 
 | GCP Service | AWS Equivalent |
 |---|---|
-| GKE | Amazon EKS |
-| GKE node pools | EKS managed node groups and Karpenter node pools |
-| GKE Load Balancer | AWS Load Balancer Controller with ALB/NLB |
+| GKE | kubeadm-managed Kubernetes on EC2 |
+| GKE node pools | EC2 Launch Templates and Auto Scaling Groups |
+| GKE Load Balancer | AWS NLB/ALB with an ingress or service controller |
 | Cloud Operations / Stackdriver | CloudWatch, Prometheus, Grafana, OpenSearch |
 | Cloud Logging | CloudWatch Logs and OpenSearch |
 | Cloud Monitoring | Prometheus, Alertmanager, CloudWatch metrics |
 | GCR / Artifact Registry | Amazon ECR |
 | Secret Manager | AWS Secrets Manager |
-| Workload Identity | IAM Roles for Service Accounts |
+| Workload Identity | Self-managed OIDC federation or scoped EC2 roles |
 | Cloud DNS | Route53 |
 | Google-managed certificates | ACM and cert-manager |
 | Cloud Armor | AWS WAF |

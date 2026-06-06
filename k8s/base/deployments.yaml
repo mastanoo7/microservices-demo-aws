@@ -257,5 +257,3 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: online-boutique
-  annotations:
-    eks.amazonaws.com/role-arn: replace-with-irsa-role-arn

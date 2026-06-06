@@ -15,4 +15,7 @@
 
 ## Multi-Region Failover
 
-Deploy a warm standby EKS cluster in a secondary AWS region. Replicate ECR images, Secrets Manager secrets, Route53 records, and observability baselines. Use Route53 health checks or CloudFront origin failover for traffic steering.
+Deploy a warm standby kubeadm cluster in a secondary AWS region. Replicate ECR
+images, Secrets Manager secrets, etcd backups, Route53 records, and observability
+baselines. Use Route53 health checks or CloudFront origin failover for traffic
+steering.

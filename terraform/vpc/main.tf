@@ -15,16 +15,26 @@ variable "tags" {
   default = {}
 }
 
+variable "single_nat_gateway" {
+  description = "Use one NAT gateway for lower-cost non-production environments."
+  type        = bool
+  default     = false
+}
+
 locals {
   public_subnets  = [for i, _ in var.azs : cidrsubnet(var.cidr, 8, i)]
   private_subnets = [for i, _ in var.azs : cidrsubnet(var.cidr, 8, i + 10)]
+  nat_azs         = var.single_nat_gateway ? [var.azs[0]] : var.azs
 }
 
 resource "aws_vpc" "this" {
   cidr_block           = var.cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
-  tags                 = merge(var.tags, { Name = var.name })
+  tags = merge(var.tags, {
+    Name                                = var.name
+    "kubernetes.io/cluster/${var.name}" = "shared"
+  })
 }
 
 resource "aws_subnet" "public" {
@@ -34,8 +44,9 @@ resource "aws_subnet" "public" {
   cidr_block              = each.value
   map_public_ip_on_launch = true
   tags = merge(var.tags, {
-    Name                     = "${var.name}-public-${each.key}"
-    "kubernetes.io/role/elb" = "1"
+    Name                                = "${var.name}-public-${each.key}"
+    "kubernetes.io/cluster/${var.name}" = "shared"
+    "kubernetes.io/role/elb"            = "1"
   })
 }
 
@@ -45,8 +56,9 @@ resource "aws_subnet" "private" {
   availability_zone = each.key
   cidr_block        = each.value
   tags = merge(var.tags, {
-    Name                              = "${var.name}-private-${each.key}"
-    "kubernetes.io/role/internal-elb" = "1"
+    Name                                = "${var.name}-private-${each.key}"
+    "kubernetes.io/cluster/${var.name}" = "shared"
+    "kubernetes.io/role/internal-elb"   = "1"
   })
 }
 
@@ -56,15 +68,17 @@ resource "aws_internet_gateway" "this" {
 }
 
 resource "aws_eip" "nat" {
-  for_each = aws_subnet.public
+  for_each = toset(local.nat_azs)
   domain   = "vpc"
   tags     = merge(var.tags, { Name = "${var.name}-nat-${each.key}" })
+
+  depends_on = [aws_internet_gateway.this]
 }
 
 resource "aws_nat_gateway" "this" {
-  for_each      = aws_subnet.public
+  for_each      = toset(local.nat_azs)
   allocation_id = aws_eip.nat[each.key].id
-  subnet_id     = each.value.id
+  subnet_id     = aws_subnet.public[each.key].id
   tags          = merge(var.tags, { Name = "${var.name}-nat-${each.key}" })
 }
 
@@ -88,7 +102,7 @@ resource "aws_route_table" "private" {
   vpc_id   = aws_vpc.this.id
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this[each.key].id
+    nat_gateway_id = aws_nat_gateway.this[var.single_nat_gateway ? var.azs[0] : each.key].id
   }
   tags = merge(var.tags, { Name = "${var.name}-private-${each.key}" })
 }
@@ -101,7 +115,7 @@ resource "aws_route_table_association" "private" {
 
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [for rt in aws_route_table.private : rt.id]
   tags              = var.tags
@@ -119,4 +133,8 @@ output "public_subnet_ids" {
 
 output "private_subnet_ids" {
   value = [for s in aws_subnet.private : s.id]
+}
+
+output "vpc_cidr" {
+  value = aws_vpc.this.cidr_block
 }

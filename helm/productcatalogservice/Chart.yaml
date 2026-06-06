@@ -1,6 +1,6 @@
 apiVersion: v2
 name: productcatalogservice
-description: Online Boutique productcatalogservice service chart for AWS EKS
+description: Online Boutique productcatalogservice chart for Kubernetes on AWS
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

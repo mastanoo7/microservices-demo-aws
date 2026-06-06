@@ -1,0 +1,27 @@
+# Reference kubeadm configuration. The automated bootstrap uses equivalent
+# command-line flags because node-specific addresses are discovered from IMDSv2.
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: ${CONTROL_PLANE_PRIVATE_IP}
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  name: ${EC2_INSTANCE_ID}
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v${KUBERNETES_VERSION}
+clusterName: ${CLUSTER_NAME}
+controlPlaneEndpoint: ${API_NLB_DNS}:6443
+networking:
+  podSubnet: ${POD_CIDR}
+  serviceSubnet: ${SERVICE_CIDR}
+apiServer:
+  extraArgs:
+    - name: enable-aggregator-routing
+      value: "true"
+controllerManager:
+  extraArgs:
+    - name: cloud-provider
+      value: external

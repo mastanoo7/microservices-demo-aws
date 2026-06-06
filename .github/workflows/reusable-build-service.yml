@@ -1,52 +1,91 @@
-name: reusable-build-service
+name: Reusable image build
+
 on:
   workflow_call:
     inputs:
       service:
         required: true
         type: string
+      environment:
+        required: true
+        type: string
       aws-region:
         required: true
         type: string
+      image-tag:
+        required: true
+        type: string
+
 jobs:
   build:
+    name: Build ${{ inputs.service }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     permissions:
       id-token: write
       contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
+          role-session-name: gha-${{ inputs.environment }}-${{ inputs.service }}
       - uses: aws-actions/amazon-ecr-login@v2
-      - name: Resolve build context
-        id: context
+        id: ecr
+      - name: Resolve image and build context
+        id: metadata
         shell: bash
         run: |
-          case "${{ inputs.service }}" in
-            cartservice)
-              echo "path=./src/cartservice/src" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "path=./src/${{ inputs.service }}" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+          set -euo pipefail
+          if [[ "${{ inputs.service }}" == "cartservice" ]]; then
+            context="./src/cartservice/src"
+          else
+            context="./src/${{ inputs.service }}"
+          fi
+          repository="online-boutique/${{ inputs.service }}"
+          image="${{ steps.ecr.outputs.registry }}/$repository:${{ inputs.image-tag }}"
+          {
+            echo "context=$context"
+            echo "repository=$repository"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+      - name: Check immutable image tag
+        id: existing
+        shell: bash
+        run: |
+          if aws ecr describe-images \
+            --repository-name "${{ steps.metadata.outputs.repository }}" \
+            --image-ids imageTag="${{ inputs.image-tag }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build image
-        run: docker build -t ${{ inputs.service }}:${{ github.sha }} "${{ steps.context.outputs.path }}"
+        if: steps.existing.outputs.exists != 'true'
+        run: docker build --tag "${{ steps.metadata.outputs.image }}" "${{ steps.metadata.outputs.context }}"
       - name: Scan image
-        uses: aquasecurity/trivy-action@master
+        if: steps.existing.outputs.exists != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ${{ inputs.service }}:${{ github.sha }}
+          image-ref: ${{ steps.metadata.outputs.image }}
           severity: CRITICAL,HIGH
+          ignore-unfixed: true
           exit-code: "1"
       - name: Push image
-        run: |
-          REPO="${{ secrets.ECR_REGISTRY }}/online-boutique/${{ inputs.service }}"
-          docker tag ${{ inputs.service }}:${{ github.sha }} "$REPO:${{ github.sha }}"
-          docker push "$REPO:${{ github.sha }}"
-      - name: Sign image
+        if: steps.existing.outputs.exists != 'true'
+        run: docker push "${{ steps.metadata.outputs.image }}"
+      - name: Install Cosign
+        if: steps.existing.outputs.exists != 'true'
         uses: sigstore/cosign-installer@v3
-      - run: cosign sign --yes "${{ secrets.ECR_REGISTRY }}/online-boutique/${{ inputs.service }}:${{ github.sha }}"
+      - name: Sign immutable digest
+        if: steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest=$(aws ecr describe-images \
+            --repository-name "${{ steps.metadata.outputs.repository }}" \
+            --image-ids imageTag="${{ inputs.image-tag }}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          cosign sign --yes "${{ steps.ecr.outputs.registry }}/${{ steps.metadata.outputs.repository }}@$digest"

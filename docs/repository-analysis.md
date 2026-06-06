@@ -34,7 +34,7 @@ The upstream repository typically includes manifests under `release/`, `kubernet
 
 | Area | Typical upstream behavior | AWS migration action |
 |---|---|---|
-| Cluster | GKE-focused deployment examples | Replace with EKS Terraform modules |
+| Cluster | GKE-focused deployment examples | Replace with kubeadm and EC2 Terraform modules |
 | Load balancing | `Service` type `LoadBalancer` via GKE LB | Use AWS Load Balancer Controller and ALB Ingress |
 | Identity | GCP service accounts / Workload Identity examples | Use IRSA with scoped IAM roles |
 | Registry | GCR/Artifact Registry examples | Use ECR repositories and lifecycle rules |
@@ -44,7 +44,10 @@ The upstream repository typically includes manifests under `release/`, `kubernet
 
 ## Istio Usage
 
-Online Boutique has optional service mesh examples in some versions. This migration does not require Istio. For production on EKS, start with Kubernetes NetworkPolicy, AWS Load Balancer Controller, and OpenTelemetry. Add App Mesh or Istio later only if mTLS, traffic splitting, or L7 service policy becomes a hard requirement.
+Online Boutique has optional service mesh examples in some versions. This
+migration does not require Istio. Start with Calico NetworkPolicy and
+OpenTelemetry; add a service mesh only if mTLS, traffic splitting, or L7 service
+policy becomes a hard requirement.
 
 ## Monitoring and Logging
 

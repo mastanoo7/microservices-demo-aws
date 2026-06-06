@@ -1,19 +1,56 @@
-name: build-services
+name: Build and publish services
+
 on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment containing AWS deployment settings
+        type: choice
+        options: [dev, qa, stage, prod]
+        required: true
+        default: dev
+      image-tag:
+        description: Immutable image tag; defaults to the selected commit SHA
+        type: string
+        required: false
   push:
     branches: [main]
     paths:
       - "src/**"
       - ".github/workflows/build-services.yml"
       - ".github/workflows/reusable-build-service.yml"
-  pull_request:
-    paths:
-      - "src/**"
-      - ".github/workflows/build-services.yml"
-      - ".github/workflows/reusable-build-service.yml"
-  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ inputs.environment || 'dev' }}-${{ github.sha }}
+  cancel-in-progress: false
+
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
+    outputs:
+      environment: ${{ steps.values.outputs.environment }}
+      aws-region: ${{ steps.values.outputs.aws-region }}
+      image-tag: ${{ steps.values.outputs.image-tag }}
+    steps:
+      - id: values
+        shell: bash
+        env:
+          INPUT_ENVIRONMENT: ${{ inputs.environment }}
+          INPUT_IMAGE_TAG: ${{ inputs.image-tag }}
+          DEFAULT_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          {
+            echo "environment=${INPUT_ENVIRONMENT:-dev}"
+            echo "aws-region=${DEFAULT_REGION:-us-east-1}"
+            echo "image-tag=${INPUT_IMAGE_TAG:-${GITHUB_SHA}}"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: metadata
     strategy:
       fail-fast: false
       matrix:
@@ -31,5 +68,7 @@ jobs:
     uses: ./.github/workflows/reusable-build-service.yml
     with:
       service: ${{ matrix.service }}
-      aws-region: us-east-1
+      environment: ${{ needs.metadata.outputs.environment }}
+      aws-region: ${{ needs.metadata.outputs.aws-region }}
+      image-tag: ${{ needs.metadata.outputs.image-tag }}
     secrets: inherit

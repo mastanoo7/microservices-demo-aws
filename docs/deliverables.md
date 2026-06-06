@@ -1,6 +1,6 @@
 # Deliverables Catalog
 
-This repository is organized as an AWS-native EKS migration deliverable for Online Boutique.
+This repository is organized as an AWS-native, self-managed Kubernetes migration deliverable for Online Boutique.
 
 | Path | Why it exists |
 |---|---|
@@ -11,11 +11,11 @@ This repository is organized as an AWS-native EKS migration deliverable for Onli
 | `docs/aws-architecture.md` | Defines production AWS architecture with Mermaid diagrams. |
 | `docs/container-optimization.md` | Documents container hardening and image optimization strategy. |
 | `docs/cost-estimation.md` | Provides cost optimization guidance and monthly estimates. |
-| `terraform/` | Provisions AWS infrastructure including VPC, EKS, ECR, security, secrets, CloudWatch, Karpenter, and ALB controller IAM. |
+| `terraform/` | Provisions the VPC, kubeadm control plane, API NLB, worker ASG, IAM, ECR, security, secrets, and CloudWatch. |
 | `k8s/` | Provides production Kubernetes manifests with Kustomize base and environment overlays. |
 | `helm/` | Provides reusable per-service Helm charts. |
 | `observability/` | Provides monitoring, logging, tracing, dashboards, and alerting assets. |
-| `security/` | Provides policy, runtime security, external secrets, and IRSA assets. |
+| `security/` | Provides policy, runtime security, external secrets, and service-account assets. |
 | `gitops/` | Provides ArgoCD App of Apps and ApplicationSet deployment strategy. |
 | `.github/workflows/` | Provides CI/CD workflows for validation, scanning, image build, Terraform, and deployment. |
 | `src/` | Contains the cloned upstream Online Boutique service source code used by Docker builds. |
@@ -25,4 +25,6 @@ This repository is organized as an AWS-native EKS migration deliverable for Onli
 
 ## Production Readiness Notes
 
-Before applying in a real AWS account, replace all placeholder values, pin upstream application image digests, scope IAM trust policies to the real EKS OIDC provider, and review module sizing for the target traffic profile.
+Before applying in a real AWS account, replace all placeholder values, pin
+application image digests, establish workload IAM through a self-managed OIDC
+provider where required, and review module sizing for the target traffic profile.

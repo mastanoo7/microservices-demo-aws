@@ -9,5 +9,7 @@ resources:
   - hpas.yaml
   - network-policies.yaml
   - ingress.yaml
-commonLabels:
-  app.kubernetes.io/part-of: online-boutique
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: online-boutique
+    includeSelectors: true
