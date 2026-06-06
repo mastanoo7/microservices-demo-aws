@@ -66,9 +66,27 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.metadata.outputs.image }}
+          format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+      - name: Generate vulnerability report
+        if: always() && steps.existing.outputs.exists != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ steps.metadata.outputs.image }}
+          format: json
+          output: trivy-${{ inputs.service }}.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Upload vulnerability report
+        if: always() && steps.existing.outputs.exists != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ inputs.service }}
+          path: trivy-${{ inputs.service }}.json
+          if-no-files-found: ignore
       - name: Push image
         if: steps.existing.outputs.exists != 'true'
         run: docker push "${{ steps.metadata.outputs.image }}"
