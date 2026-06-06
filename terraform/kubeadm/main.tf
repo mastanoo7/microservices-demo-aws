@@ -29,6 +29,21 @@ locals {
   parameter_prefix = "/kubeadm/${var.name}"
   bootstrap_bucket = "${var.name}-${data.aws_caller_identity.current.account_id}-bootstrap"
   api_subnet_ids   = var.api_internal ? var.private_subnet_ids : var.public_subnet_ids
+  bootstrap_script = templatefile("${path.module}/templates/bootstrap.sh.tftpl", {
+    cluster_name               = var.name
+    kubernetes_version         = var.kubernetes_version
+    pod_cidr                   = var.pod_cidr
+    service_cidr               = var.service_cidr
+    api_endpoint               = aws_lb.api.dns_name
+    region                     = data.aws_region.current.region
+    parameter_prefix           = local.parameter_prefix
+    bootstrap_bucket           = local.bootstrap_bucket
+    calico_version             = var.calico_version
+    metrics_server_version     = var.metrics_server_version
+    cluster_autoscaler_version = var.cluster_autoscaler_version
+  })
+  bootstrap_script_sha256 = sha256(local.bootstrap_script)
+  bootstrap_script_md5    = md5(local.bootstrap_script)
 }
 
 resource "aws_s3_bucket" "bootstrap" {
@@ -62,22 +77,10 @@ resource "aws_s3_bucket_public_access_block" "bootstrap" {
 }
 
 resource "aws_s3_object" "bootstrap_script" {
-  bucket = aws_s3_bucket.bootstrap.id
-  key    = "bootstrap/bootstrap.sh"
-  content = templatefile("${path.module}/templates/bootstrap.sh.tftpl", {
-    cluster_name               = var.name
-    kubernetes_version         = var.kubernetes_version
-    pod_cidr                   = var.pod_cidr
-    service_cidr               = var.service_cidr
-    api_endpoint               = aws_lb.api.dns_name
-    region                     = data.aws_region.current.region
-    parameter_prefix           = local.parameter_prefix
-    bootstrap_bucket           = local.bootstrap_bucket
-    calico_version             = var.calico_version
-    metrics_server_version     = var.metrics_server_version
-    cluster_autoscaler_version = var.cluster_autoscaler_version
-  })
-  etag = filemd5("${path.module}/templates/bootstrap.sh.tftpl")
+  bucket  = aws_s3_bucket.bootstrap.id
+  key     = "bootstrap/bootstrap.sh"
+  content = local.bootstrap_script
+  etag    = local.bootstrap_script_md5
 }
 
 resource "aws_s3_object" "aws_cloud_controller_manager" {
@@ -391,8 +394,17 @@ resource "aws_instance" "control_plane" {
   user_data                   = <<-EOT
     #!/bin/bash
     set -euo pipefail
-    apt-get update
-    apt-get install -y awscli
+    exec > >(tee -a /var/log/kubeadm-user-data.log) 2>&1
+    # bootstrap-sha256: ${local.bootstrap_script_sha256}
+    export DEBIAN_FRONTEND=noninteractive
+    for attempt in $(seq 1 20); do
+      apt-get update && apt-get install -y awscli && break
+      if [ "$attempt" -eq 20 ]; then
+        echo "Failed to install awscli after 20 attempts." >&2
+        exit 1
+      fi
+      sleep 15
+    done
     aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap control-plane ${count.index}
@@ -440,8 +452,17 @@ resource "aws_launch_template" "worker" {
   user_data = base64encode(<<-EOT
     #!/bin/bash
     set -euo pipefail
-    apt-get update
-    apt-get install -y awscli
+    exec > >(tee -a /var/log/kubeadm-user-data.log) 2>&1
+    # bootstrap-sha256: ${local.bootstrap_script_sha256}
+    export DEBIAN_FRONTEND=noninteractive
+    for attempt in $(seq 1 20); do
+      apt-get update && apt-get install -y awscli && break
+      if [ "$attempt" -eq 20 ]; then
+        echo "Failed to install awscli after 20 attempts." >&2
+        exit 1
+      fi
+      sleep 15
+    done
     aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap worker 0

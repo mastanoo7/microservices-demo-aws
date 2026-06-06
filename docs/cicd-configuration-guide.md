@@ -328,11 +328,24 @@ AWS completes its recovery window, but it no longer blocks deployment.
 
 ### Kubeconfig parameter times out
 
-Inspect `/var/log/kubeadm-bootstrap.log` on the first control-plane node and
-verify:
+The deployment workflow monitors:
 
 ```text
 /kubeadm/online-boutique-dev/admin-kubeconfig
+/kubeadm/online-boutique-dev/bootstrap-status-control-plane-0
+```
+
+The status parameter reports the bootstrap phase or the exact failing line and
+command. Bootstrap script changes are included in EC2 user data, so the next
+Terraform apply replaces a failed control-plane instance and rolls the worker
+launch template automatically.
+
+For deeper inspection, connect to the first control-plane node and review:
+
+```bash
+sudo cloud-init status --long
+sudo cat /var/log/kubeadm-user-data.log
+sudo cat /var/log/kubeadm-bootstrap.log
 ```
 
 ### No control-plane instance is online in SSM

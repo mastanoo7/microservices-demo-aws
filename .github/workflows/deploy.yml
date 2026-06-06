@@ -213,6 +213,7 @@ jobs:
             printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
           }
 
+          bootstrap_status_parameter="${KUBECONFIG_PARAMETER%/admin-kubeconfig}/bootstrap-status-control-plane-0"
           log "Waiting for kubeconfig in SSM parameter $KUBECONFIG_PARAMETER."
           kubeconfig_ready=false
           for attempt in $(seq 1 120); do
@@ -225,13 +226,25 @@ jobs:
               log "Kubeconfig retrieved from SSM."
               break
             fi
+            bootstrap_status=$(aws ssm get-parameter \
+              --name "$bootstrap_status_parameter" \
+              --query Parameter.Value \
+              --output text 2>/dev/null || true)
+            if [[ "$bootstrap_status" == failed* ]]; then
+              echo "Primary control-plane bootstrap failed: $bootstrap_status" >&2
+              exit 1
+            fi
             if (( attempt % 20 == 0 )); then
-              log "Kubeconfig is not available yet; waited $((attempt * 15 / 60)) minutes."
+              log "Kubeconfig is not available yet; waited $((attempt * 15 / 60)) minutes. Bootstrap status: ${bootstrap_status:-not published}"
             fi
             sleep 15
           done
           if [[ "$kubeconfig_ready" != "true" || ! -s "$KUBECONFIG" ]]; then
             echo "Kubeconfig was not available in SSM parameter $KUBECONFIG_PARAMETER after 30 minutes." >&2
+            aws ssm get-parameter \
+              --name "$bootstrap_status_parameter" \
+              --query Parameter.Value \
+              --output text || true
             aws ssm get-parameter \
               --name "$KUBECONFIG_PARAMETER" \
               --with-decryption \

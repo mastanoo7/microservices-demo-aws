@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
 exec > >(tee -a /var/log/kubeadm-bootstrap.log) 2>&1
 
 ROLE="$1"
@@ -14,6 +14,29 @@ PARAMETER_PREFIX="${parameter_prefix}"
 BOOTSTRAP_BUCKET="${bootstrap_bucket}"
 CALICO_VERSION="${calico_version}"
 METRICS_SERVER_VERSION="${metrics_server_version}"
+STATUS_PARAMETER="$PARAMETER_PREFIX/bootstrap-status-$ROLE-$INDEX"
+
+publish_status() {
+  aws ssm put-parameter \
+    --region "$AWS_REGION" \
+    --name "$STATUS_PARAMETER" \
+    --type String \
+    --value "$1" \
+    --overwrite >/dev/null 2>&1 || true
+}
+
+bootstrap_failed() {
+  local exit_code="$?"
+  local line_number="$1"
+  local command="$2"
+  trap - ERR
+  publish_status "failed role=$ROLE index=$INDEX line=$line_number exit=$exit_code command=$command"
+  echo "Bootstrap failed at line $line_number with exit code $exit_code: $command" >&2
+  exit "$exit_code"
+}
+
+trap 'bootstrap_failed "$LINENO" "$BASH_COMMAND"' ERR
+publish_status "running role=$ROLE index=$INDEX step=starting"
 
 retry() {
   local attempts="$1"
@@ -86,6 +109,7 @@ fi
 systemctl enable kubelet
 
 if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
+  publish_status "running role=$ROLE index=$INDEX step=kubeadm-init"
   kubeadm init \
     --control-plane-endpoint "$API_ENDPOINT" \
     --apiserver-advertise-address "$LOCAL_IP" \
@@ -125,6 +149,7 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     --value "$(cat /etc/kubernetes/admin.conf)" \
     --overwrite
 
+  publish_status "running role=$ROLE index=$INDEX step=addons"
   kubectl create -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
   curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml" \
     | sed "s#192.168.0.0/16#$POD_CIDR#g" \
@@ -170,4 +195,5 @@ else
   kubectl --kubeconfig /etc/kubernetes/kubelet.conf label node "$NODE_NAME" workload=application --overwrite || true
 fi
 
+publish_status "completed role=$ROLE index=$INDEX"
 echo "kubeadm bootstrap completed for $ROLE $INSTANCE_ID"
