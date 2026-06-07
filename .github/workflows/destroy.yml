@@ -74,3 +74,16 @@ jobs:
             args+=("-var-file=${RUNNER_TEMP}/environment.tfvars")
           fi
           terraform -chdir=terraform/environments/dev destroy "${args[@]}"
+      - name: Remove runtime bootstrap parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          parameter_path="/kubeadm/online-boutique-dev"
+          mapfile -t parameter_names < <(aws ssm get-parameters-by-path \
+            --path "$parameter_path" \
+            --recursive \
+            --query 'Parameters[].Name' \
+            --output text | tr '\t' '\n')
+          for ((index = 0; index < ${#parameter_names[@]}; index += 10)); do
+            aws ssm delete-parameters --names "${parameter_names[@]:index:10}"
+          done

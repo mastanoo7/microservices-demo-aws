@@ -13,6 +13,13 @@ variable "kubernetes_version" {
   default = "1.35"
 }
 
+variable "ami_id" {
+  description = "Optional Ubuntu 24.04 AMI ID for control-plane and worker nodes."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "control_plane_count" {
   type    = number
   default = 1
@@ -31,16 +38,31 @@ variable "worker_instance_type" {
 variable "worker_min_size" {
   type    = number
   default = 1
+
+  validation {
+    condition     = var.worker_min_size >= 1
+    error_message = "worker_min_size must be at least 1."
+  }
 }
 
 variable "worker_desired_size" {
   type    = number
   default = 2
+
+  validation {
+    condition     = var.worker_desired_size >= var.worker_min_size && var.worker_desired_size <= var.worker_max_size
+    error_message = "worker_desired_size must be between worker_min_size and worker_max_size."
+  }
 }
 
 variable "worker_max_size" {
   type    = number
   default = 6
+
+  validation {
+    condition     = var.worker_max_size >= var.worker_min_size
+    error_message = "worker_max_size must be greater than or equal to worker_min_size."
+  }
 }
 
 variable "api_access_cidrs" {

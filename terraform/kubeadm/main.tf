@@ -29,8 +29,28 @@ locals {
   parameter_prefix = "/kubeadm/${var.name}"
   bootstrap_bucket = "${var.name}-${data.aws_caller_identity.current.account_id}-bootstrap"
   api_subnet_ids   = var.api_internal ? var.private_subnet_ids : var.public_subnet_ids
+  node_ami_id      = coalesce(var.ami_id, data.aws_ami.ubuntu.id)
+  bootstrap_generation = sha256(jsonencode({
+    bootstrap_template_sha256   = filesha256("${path.module}/templates/bootstrap.sh.tftpl")
+    cloud_controller_sha256     = filesha256("${path.module}/templates/aws-cloud-controller-manager.yaml.tftpl")
+    cluster_autoscaler_sha256   = filesha256("${path.module}/templates/cluster-autoscaler.yaml.tftpl")
+    cluster_name                = var.name
+    aws_region                  = data.aws_region.current.region
+    node_ami_id                 = local.node_ami_id
+    kubernetes_version          = var.kubernetes_version
+    pod_cidr                    = var.pod_cidr
+    service_cidr                = var.service_cidr
+    control_plane_count         = var.control_plane_count
+    control_plane_instance_type = var.control_plane_instance_type
+    worker_instance_type        = var.worker_instance_type
+    root_volume_size            = var.root_volume_size
+    calico_version              = var.calico_version
+    metrics_server_version      = var.metrics_server_version
+    cluster_autoscaler_version  = var.cluster_autoscaler_version
+  }))
   bootstrap_script = templatefile("${path.module}/templates/bootstrap.sh.tftpl", {
     cluster_name               = var.name
+    bootstrap_generation       = local.bootstrap_generation
     kubernetes_version         = var.kubernetes_version
     pod_cidr                   = var.pod_cidr
     service_cidr               = var.service_cidr
@@ -197,6 +217,7 @@ data "aws_iam_policy_document" "control_plane" {
       "autoscaling:DescribeAutoScalingInstances",
       "autoscaling:DescribeLaunchConfigurations",
       "autoscaling:DescribeScalingActivities",
+      "autoscaling:DescribeTags",
       "ec2:DescribeImages",
       "ec2:DescribeInstanceTypes",
       "ec2:DescribeLaunchTemplateVersions",
@@ -218,6 +239,18 @@ data "aws_iam_policy_document" "control_plane" {
       values   = ["owned"]
     }
   }
+
+  statement {
+    sid       = "ElasticLoadBalancingServiceRole"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["elasticloadbalancing.amazonaws.com"]
+    }
+  }
 }
 
 data "aws_iam_policy_document" "worker" {
@@ -228,9 +261,15 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    sid       = "WorkerJoinParameter"
-    actions   = ["ssm:GetParameter"]
-    resources = ["arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.parameter_prefix}/worker-join"]
+    sid = "WorkerBootstrapParameters"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:PutParameter"
+    ]
+    resources = [
+      "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.parameter_prefix}/worker-join",
+      "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.parameter_prefix}/bootstrap-status-worker-*"
+    ]
   }
 
   statement {
@@ -384,7 +423,7 @@ resource "aws_lb_listener" "api" {
 resource "aws_instance" "control_plane" {
   count = var.control_plane_count
 
-  ami                         = data.aws_ami.ubuntu.id
+  ami                         = local.node_ami_id
   instance_type               = var.control_plane_instance_type
   subnet_id                   = var.private_subnet_ids[count.index % length(var.private_subnet_ids)]
   vpc_security_group_ids      = [aws_security_group.control_plane.id]
@@ -421,7 +460,14 @@ resource "aws_instance" "control_plane" {
       done
     fi
     aws --version
-    aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
+    for attempt in $(seq 1 20); do
+      aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap && break
+      if [ "$attempt" -eq 20 ]; then
+        echo "Failed to download the kubeadm bootstrap script after 20 attempts." >&2
+        exit 1
+      fi
+      sleep 15
+    done
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap control-plane ${count.index}
   EOT
@@ -463,7 +509,7 @@ resource "aws_lb_target_group_attachment" "control_plane" {
 
 resource "aws_launch_template" "worker" {
   name_prefix   = "${var.name}-worker-"
-  image_id      = data.aws_ami.ubuntu.id
+  image_id      = local.node_ami_id
   instance_type = var.worker_instance_type
   user_data = base64encode(<<-EOT
     #!/bin/bash
@@ -495,7 +541,14 @@ resource "aws_launch_template" "worker" {
       done
     fi
     aws --version
-    aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap
+    for attempt in $(seq 1 20); do
+      aws s3 cp "s3://${local.bootstrap_bucket}/bootstrap/bootstrap.sh" /usr/local/sbin/kubeadm-bootstrap && break
+      if [ "$attempt" -eq 20 ]; then
+        echo "Failed to download the kubeadm bootstrap script after 20 attempts." >&2
+        exit 1
+      fi
+      sleep 15
+    done
     chmod 700 /usr/local/sbin/kubeadm-bootstrap
     /usr/local/sbin/kubeadm-bootstrap worker 0
   EOT
@@ -548,12 +601,13 @@ resource "aws_launch_template" "worker" {
 }
 
 resource "aws_autoscaling_group" "worker" {
-  name                = "${var.name}-workers"
-  min_size            = var.worker_min_size
-  desired_capacity    = var.worker_desired_size
-  max_size            = var.worker_max_size
-  vpc_zone_identifier = var.private_subnet_ids
-  health_check_type   = "EC2"
+  name                      = "${var.name}-workers"
+  min_size                  = var.worker_min_size
+  desired_capacity          = var.worker_desired_size
+  max_size                  = var.worker_max_size
+  vpc_zone_identifier       = var.private_subnet_ids
+  health_check_type         = "EC2"
+  health_check_grace_period = 600
 
   launch_template {
     id      = aws_launch_template.worker.id

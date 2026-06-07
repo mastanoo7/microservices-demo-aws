@@ -189,6 +189,7 @@ jobs:
           app_hostname=$(terraform -chdir=terraform/environments/dev output -raw app_hostname)
           route53_zone_id=$(terraform -chdir=terraform/environments/dev output -raw route53_zone_id)
           worker_asg=$(terraform -chdir=terraform/environments/dev output -raw worker_autoscaling_group_name)
+          bootstrap_generation=$(terraform -chdir=terraform/environments/dev output -raw bootstrap_generation)
           terraform -chdir=terraform/environments/dev output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
           terraform -chdir=terraform/environments/dev output -json route53_name_servers > "${RUNNER_TEMP}/route53-name-servers.json"
           api_host=${endpoint#https://}
@@ -199,6 +200,7 @@ jobs:
             echo "app-hostname=$app_hostname"
             echo "route53-zone-id=$route53_zone_id"
             echo "worker-asg=$worker_asg"
+            echo "bootstrap-generation=$bootstrap_generation"
           } >> "$GITHUB_OUTPUT"
       - name: Connect and deploy
         shell: bash
@@ -209,6 +211,7 @@ jobs:
           APP_HOST: ${{ steps.cluster.outputs.app-hostname }}
           ROUTE53_ZONE_ID: ${{ steps.cluster.outputs.route53-zone-id }}
           WORKER_ASG: ${{ steps.cluster.outputs.worker-asg }}
+          BOOTSTRAP_GENERATION: ${{ steps.cluster.outputs.bootstrap-generation }}
         run: |
           set -euo pipefail
 
@@ -222,14 +225,16 @@ jobs:
             echo "Terraform returned no primary control-plane instance ID." >&2
             exit 1
           fi
-          log "Waiting for kubeconfig in SSM parameter $KUBECONFIG_PARAMETER."
+          log "Waiting for primary control-plane bootstrap generation $BOOTSTRAP_GENERATION."
           kubeconfig_ready=false
-          for attempt in $(seq 1 120); do
+          for attempt in $(seq 1 240); do
             bootstrap_status=$(aws ssm get-parameter \
               --name "$bootstrap_status_parameter" \
               --query Parameter.Value \
               --output text 2>/dev/null || true)
-            if [[ "$bootstrap_status" == failed* && "$bootstrap_status" == *"instance=$target"* ]]; then
+            if [[ "$bootstrap_status" == failed* \
+              && "$bootstrap_status" == *"instance=$target"* \
+              && "$bootstrap_status" == *"generation=$BOOTSTRAP_GENERATION"* ]]; then
               echo "Primary control-plane bootstrap failed: $bootstrap_status" >&2
               exit 1
             fi
@@ -238,18 +243,20 @@ jobs:
               --with-decryption \
               --query Parameter.Value \
               --output text > "$KUBECONFIG" 2>/dev/null \
-              && [[ "$bootstrap_status" == *"instance=$target"* ]]; then
+              && [[ "$bootstrap_status" == completed* \
+                && "$bootstrap_status" == *"instance=$target"* \
+                && "$bootstrap_status" == *"generation=$BOOTSTRAP_GENERATION"* ]]; then
               kubeconfig_ready=true
-              log "Kubeconfig retrieved from SSM."
+              log "Primary control-plane bootstrap completed and kubeconfig was retrieved from SSM."
               break
             fi
             if (( attempt % 20 == 0 )); then
-              log "Kubeconfig is not available yet; waited $((attempt * 15 / 60)) minutes. Bootstrap status: ${bootstrap_status:-not published}"
+              log "Primary bootstrap is incomplete; waited $((attempt * 15 / 60)) minutes. Status: ${bootstrap_status:-not published}"
             fi
             sleep 15
           done
           if [[ "$kubeconfig_ready" != "true" || ! -s "$KUBECONFIG" ]]; then
-            echo "Kubeconfig was not available in SSM parameter $KUBECONFIG_PARAMETER after 30 minutes." >&2
+            echo "Primary control-plane bootstrap did not complete after 60 minutes." >&2
             aws ssm get-parameter \
               --name "$bootstrap_status_parameter" \
               --query Parameter.Value \
@@ -385,6 +392,17 @@ jobs:
             if (( SECONDS >= next_worker_log )); then
               log "No Ready application worker yet; waited $(((SECONDS - worker_readiness_started) / 60)) minutes."
               kubectl get nodes -o wide || true
+              worker_instance_ids=$(aws autoscaling describe-auto-scaling-groups \
+                --auto-scaling-group-names "$WORKER_ASG" \
+                --query 'AutoScalingGroups[0].Instances[].InstanceId' \
+                --output text 2>/dev/null || true)
+              for worker_instance_id in $worker_instance_ids; do
+                worker_status=$(aws ssm get-parameter \
+                  --name "${KUBECONFIG_PARAMETER%/admin-kubeconfig}/bootstrap-status-worker-$worker_instance_id" \
+                  --query Parameter.Value \
+                  --output text 2>/dev/null || true)
+                log "Worker $worker_instance_id bootstrap status: ${worker_status:-not published}"
+              done
               next_worker_log=$((next_worker_log + 120))
             fi
             sleep 10
@@ -403,6 +421,16 @@ jobs:
               --max-items 10 \
               --query 'Activities[].{Time:StartTime,Status:StatusCode,Cause:Cause,Description:Description,Message:StatusMessage}' \
               --output table >&2 || true
+            worker_instance_ids=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$WORKER_ASG" \
+              --query 'AutoScalingGroups[0].Instances[].InstanceId' \
+              --output text 2>/dev/null || true)
+            for worker_instance_id in $worker_instance_ids; do
+              aws ssm get-parameter \
+                --name "${KUBECONFIG_PARAMETER%/admin-kubeconfig}/bootstrap-status-worker-$worker_instance_id" \
+                --query Parameter.Value \
+                --output text >&2 || true
+            done
             exit 1
           fi
 

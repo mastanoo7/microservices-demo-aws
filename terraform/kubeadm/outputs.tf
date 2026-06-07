@@ -30,6 +30,10 @@ output "kubeconfig_ssm_parameter" {
   value = "${local.parameter_prefix}/admin-kubeconfig"
 }
 
+output "bootstrap_generation" {
+  value = local.bootstrap_generation
+}
+
 output "ssm_start_session_commands" {
   value = [
     for id in aws_instance.control_plane[*].id :

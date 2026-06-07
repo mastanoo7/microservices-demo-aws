@@ -26,6 +26,13 @@ variable "kubernetes_version" {
   default     = "1.35"
 }
 
+variable "ami_id" {
+  description = "Optional Ubuntu 24.04 AMI ID. Set this to pin node replacements to a tested image."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "pod_cidr" {
   type    = string
   default = "192.168.0.0/16"
@@ -59,16 +66,31 @@ variable "worker_instance_type" {
 variable "worker_min_size" {
   type    = number
   default = 3
+
+  validation {
+    condition     = var.worker_min_size >= 1
+    error_message = "worker_min_size must be at least 1."
+  }
 }
 
 variable "worker_desired_size" {
   type    = number
   default = 3
+
+  validation {
+    condition     = var.worker_desired_size >= var.worker_min_size && var.worker_desired_size <= var.worker_max_size
+    error_message = "worker_desired_size must be between worker_min_size and worker_max_size."
+  }
 }
 
 variable "worker_max_size" {
   type    = number
   default = 10
+
+  validation {
+    condition     = var.worker_max_size >= var.worker_min_size
+    error_message = "worker_max_size must be greater than or equal to worker_min_size."
+  }
 }
 
 variable "root_volume_size" {

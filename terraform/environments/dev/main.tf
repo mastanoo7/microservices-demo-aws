@@ -30,6 +30,7 @@ module "kubeadm" {
   private_subnet_ids          = module.vpc.private_subnet_ids
   public_subnet_ids           = module.vpc.public_subnet_ids
   kubernetes_version          = var.kubernetes_version
+  ami_id                      = var.ami_id
   control_plane_count         = var.control_plane_count
   control_plane_instance_type = var.control_plane_instance_type
   worker_instance_type        = var.worker_instance_type
@@ -78,6 +79,10 @@ output "cluster_api_endpoint" {
 
 output "kubeconfig_ssm_parameter" {
   value = module.kubeadm.kubeconfig_ssm_parameter
+}
+
+output "bootstrap_generation" {
+  value = module.kubeadm.bootstrap_generation
 }
 
 output "worker_autoscaling_group_name" {
