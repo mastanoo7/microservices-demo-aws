@@ -115,7 +115,7 @@ retry 20 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 
 cat >/etc/default/kubelet <<EOF
-KUBELET_EXTRA_ARGS=--cloud-provider=external --provider-id=$PROVIDER_ID --node-ip=$LOCAL_IP
+KUBELET_EXTRA_ARGS=--provider-id=$PROVIDER_ID --node-ip=$LOCAL_IP
 EOF
 if [[ "$ROLE" == "worker" ]]; then
   sed -i 's/$/ --node-labels=workload=application/' /etc/default/kubelet
@@ -218,15 +218,50 @@ spec:
 EOF
   retry 20 kubectl apply -f /tmp/calico-custom-resources.yaml
 
+  publish_status "running role=$ROLE index=$INDEX step=calico-readiness"
+  calico_ready=false
+  for attempt in $(seq 1 90); do
+    calico_available=$(kubectl get tigerastatus calico \
+      -o jsonpath='{range .status.conditions[?(@.type=="Available")]}{.status}{end}' \
+      2>/dev/null || true)
+    calico_degraded=$(kubectl get tigerastatus calico \
+      -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' \
+      2>/dev/null || true)
+    if [[ "$calico_available" == "True" && "$calico_degraded" != "True" ]]; then
+      calico_ready=true
+      break
+    fi
+    if (( attempt % 12 == 0 )); then
+      kubectl get tigerastatus || true
+      kubectl -n calico-system get pods -o wide || true
+    fi
+    sleep 10
+  done
+  if [[ "$calico_ready" != "true" ]]; then
+    kubectl get tigerastatus -o yaml || true
+    kubectl -n calico-system get pods -o wide || true
+    kubectl -n calico-system describe pods || true
+    kubectl -n tigera-operator logs deployment/tigera-operator --all-containers --tail=300 || true
+    kubectl get events -A --sort-by=.lastTimestamp || true
+    false
+  fi
+
+  publish_status "running role=$ROLE index=$INDEX step=node-readiness"
+  if ! kubectl wait --for=condition=Ready "node/$NODE_NAME" --timeout=10m; then
+    kubectl get node "$NODE_NAME" -o yaml || true
+    kubectl describe node "$NODE_NAME" || true
+    kubectl -n kube-system get pods -o wide || true
+    kubectl -n calico-system get pods -o wide || true
+    journalctl -u kubelet --no-pager -n 300 || true
+    false
+  fi
+
   publish_status "running role=$ROLE index=$INDEX step=aws-cloud-controller-manager"
   retry 20 aws s3 cp \
     "s3://$BOOTSTRAP_BUCKET/addons/aws-cloud-controller-manager.yaml" \
     /tmp/aws-ccm.yaml
   kubectl apply -f /tmp/aws-ccm.yaml
   kubectl -n kube-system rollout status daemonset/aws-cloud-controller-manager --timeout=10m
-
-  publish_status "running role=$ROLE index=$INDEX step=node-readiness"
-  kubectl wait --for=condition=Ready "node/$NODE_NAME" --timeout=15m
 
   publish_status "running role=$ROLE index=$INDEX step=metrics-server"
   retry 20 kubectl apply \
