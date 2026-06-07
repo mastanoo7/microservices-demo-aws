@@ -365,7 +365,7 @@ jobs:
             exit 1
           fi
 
-          log "Waiting for a Ready application worker node."
+          log "Waiting for an initialized Ready application worker node."
           worker_ready=false
           worker_readiness_started=$SECONDS
           worker_readiness_deadline=$((SECONDS + 1200))
@@ -377,11 +377,15 @@ jobs:
               | jq -r '.items[]
                 | select(any(.status.conditions[]?;
                     .type == "Ready" and .status == "True"))
+                | select(
+                    [.spec.taints[]?.key]
+                    | index("node.cloudprovider.kubernetes.io/uninitialized")
+                    | not)
                 | .metadata.name' || true)
             if [[ -n "$ready_workers" ]]; then
               worker_ready=true
               ready_worker=${ready_workers%%$'\n'*}
-              log "Application worker node is ready: $ready_worker"
+              log "Application worker node is initialized and ready: $ready_worker"
               break
             fi
             if ! kill -0 "$tunnel_pid" 2>/dev/null; then
@@ -390,7 +394,7 @@ jobs:
               exit 1
             fi
             if (( SECONDS >= next_worker_log )); then
-              log "No Ready application worker yet; waited $(((SECONDS - worker_readiness_started) / 60)) minutes."
+              log "No initialized Ready application worker yet; waited $(((SECONDS - worker_readiness_started) / 60)) minutes."
               kubectl get nodes -o wide || true
               worker_instance_ids=$(aws autoscaling describe-auto-scaling-groups \
                 --auto-scaling-group-names "$WORKER_ASG" \
@@ -421,7 +425,7 @@ jobs:
             sleep 10
           done
           if [[ "$worker_ready" != "true" ]]; then
-            echo "No application worker became Ready after 20 minutes." >&2
+            echo "No application worker became initialized and Ready after 20 minutes." >&2
             kubectl get nodes -o wide >&2 || true
             kubectl get pods -n kube-system -o wide >&2 || true
             kubectl get events -A --sort-by=.lastTimestamp >&2 || true
@@ -457,6 +461,14 @@ jobs:
           log "Installing or upgrading ingress-nginx."
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
+          # A timed-out Helm pre-install can leave hook Jobs whose service
+          # accounts have already been removed. Clear them before retrying.
+          kubectl -n ingress-nginx delete job \
+            ingress-nginx-admission-create \
+            ingress-nginx-admission-patch \
+            --ignore-not-found \
+            --wait=true \
+            --timeout=2m
           if ! helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace ingress-nginx \
             --create-namespace \
