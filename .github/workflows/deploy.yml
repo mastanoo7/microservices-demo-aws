@@ -188,6 +188,7 @@ jobs:
           parameter=$(terraform -chdir=terraform/environments/dev output -raw kubeconfig_ssm_parameter)
           app_hostname=$(terraform -chdir=terraform/environments/dev output -raw app_hostname)
           route53_zone_id=$(terraform -chdir=terraform/environments/dev output -raw route53_zone_id)
+          worker_asg=$(terraform -chdir=terraform/environments/dev output -raw worker_autoscaling_group_name)
           terraform -chdir=terraform/environments/dev output -json control_plane_instance_ids > "${RUNNER_TEMP}/control-plane-ids.json"
           terraform -chdir=terraform/environments/dev output -json route53_name_servers > "${RUNNER_TEMP}/route53-name-servers.json"
           api_host=${endpoint#https://}
@@ -197,6 +198,7 @@ jobs:
             echo "parameter=$parameter"
             echo "app-hostname=$app_hostname"
             echo "route53-zone-id=$route53_zone_id"
+            echo "worker-asg=$worker_asg"
           } >> "$GITHUB_OUTPUT"
       - name: Connect and deploy
         shell: bash
@@ -206,6 +208,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           APP_HOST: ${{ steps.cluster.outputs.app-hostname }}
           ROUTE53_ZONE_ID: ${{ steps.cluster.outputs.route53-zone-id }}
+          WORKER_ASG: ${{ steps.cluster.outputs.worker-asg }}
         run: |
           set -euo pipefail
 
@@ -214,25 +217,31 @@ jobs:
           }
 
           bootstrap_status_parameter="${KUBECONFIG_PARAMETER%/admin-kubeconfig}/bootstrap-status-control-plane-0"
+          target=$(jq -r '.[0] // empty' "${RUNNER_TEMP}/control-plane-ids.json")
+          if [[ -z "$target" ]]; then
+            echo "Terraform returned no primary control-plane instance ID." >&2
+            exit 1
+          fi
           log "Waiting for kubeconfig in SSM parameter $KUBECONFIG_PARAMETER."
           kubeconfig_ready=false
           for attempt in $(seq 1 120); do
-            if aws ssm get-parameter \
-              --name "$KUBECONFIG_PARAMETER" \
-              --with-decryption \
-              --query Parameter.Value \
-              --output text > "$KUBECONFIG" 2>/dev/null; then
-              kubeconfig_ready=true
-              log "Kubeconfig retrieved from SSM."
-              break
-            fi
             bootstrap_status=$(aws ssm get-parameter \
               --name "$bootstrap_status_parameter" \
               --query Parameter.Value \
               --output text 2>/dev/null || true)
-            if [[ "$bootstrap_status" == failed* ]]; then
+            if [[ "$bootstrap_status" == failed* && "$bootstrap_status" == *"instance=$target"* ]]; then
               echo "Primary control-plane bootstrap failed: $bootstrap_status" >&2
               exit 1
+            fi
+            if aws ssm get-parameter \
+              --name "$KUBECONFIG_PARAMETER" \
+              --with-decryption \
+              --query Parameter.Value \
+              --output text > "$KUBECONFIG" 2>/dev/null \
+              && [[ "$bootstrap_status" == *"instance=$target"* ]]; then
+              kubeconfig_ready=true
+              log "Kubeconfig retrieved from SSM."
+              break
             fi
             if (( attempt % 20 == 0 )); then
               log "Kubeconfig is not available yet; waited $((attempt * 15 / 60)) minutes. Bootstrap status: ${bootstrap_status:-not published}"
@@ -254,11 +263,6 @@ jobs:
           fi
           chmod 600 "$KUBECONFIG"
 
-          target=$(jq -r '.[0] // empty' "${RUNNER_TEMP}/control-plane-ids.json")
-          if [[ -z "$target" ]]; then
-            echo "Terraform returned no primary control-plane instance ID." >&2
-            exit 1
-          fi
           log "Waiting for primary control-plane instance $target to become online in SSM."
           target_online=false
           for attempt in $(seq 1 60); do
@@ -390,6 +394,15 @@ jobs:
             kubectl get nodes -o wide >&2 || true
             kubectl get pods -n kube-system -o wide >&2 || true
             kubectl get events -A --sort-by=.lastTimestamp >&2 || true
+            aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$WORKER_ASG" \
+              --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,Min:MinSize,Max:MaxSize,Instances:Instances[].{Id:InstanceId,Lifecycle:LifecycleState,Health:HealthStatus,AZ:AvailabilityZone}}' \
+              --output json >&2 || true
+            aws autoscaling describe-scaling-activities \
+              --auto-scaling-group-name "$WORKER_ASG" \
+              --max-items 10 \
+              --query 'Activities[].{Time:StartTime,Status:StatusCode,Cause:Cause,Description:Description,Message:StatusMessage}' \
+              --output table >&2 || true
             exit 1
           fi
 

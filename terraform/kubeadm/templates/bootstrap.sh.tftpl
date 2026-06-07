@@ -21,7 +21,7 @@ publish_status() {
     --region "$AWS_REGION" \
     --name "$STATUS_PARAMETER" \
     --type String \
-    --value "$1" \
+    --value "$1 instance=$${INSTANCE_ID:-unknown}" \
     --overwrite >/dev/null 2>&1 || true
 }
 
@@ -36,7 +36,6 @@ bootstrap_failed() {
 }
 
 trap 'bootstrap_failed "$LINENO" "$BASH_COMMAND"' ERR
-publish_status "running role=$ROLE index=$INDEX step=starting"
 
 retry() {
   local attempts="$1"
@@ -64,6 +63,7 @@ LOCAL_IP=$(imds meta-data/local-ipv4)
 AZ=$(imds meta-data/placement/availability-zone)
 PROVIDER_ID="aws:///$AZ/$INSTANCE_ID"
 NODE_NAME="$INSTANCE_ID"
+publish_status "running role=$ROLE index=$INDEX step=starting"
 
 swapoff -a
 sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
@@ -119,11 +119,6 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     --cri-socket unix:///run/containerd/containerd.sock \
     --upload-certs
 
-  mkdir -p /root/.kube /home/ubuntu/.kube
-  cp /etc/kubernetes/admin.conf /root/.kube/config
-  cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
-  chown -R ubuntu:ubuntu /home/ubuntu/.kube
-
   # Avoid routing bootstrap API calls from the first control-plane node through
   # the NLB back to itself. Keep admin.conf unchanged for external clients.
   BOOTSTRAP_KUBECONFIG=/etc/kubernetes/bootstrap-admin.conf
@@ -133,6 +128,10 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
   kubectl --kubeconfig "$BOOTSTRAP_KUBECONFIG" config set-cluster "$BOOTSTRAP_CLUSTER" \
     --server="https://$LOCAL_IP:6443"
   export KUBECONFIG="$BOOTSTRAP_KUBECONFIG"
+  mkdir -p /root/.kube /home/ubuntu/.kube
+  cp "$BOOTSTRAP_KUBECONFIG" /root/.kube/config
+  cp "$BOOTSTRAP_KUBECONFIG" /home/ubuntu/.kube/config
+  chown -R ubuntu:ubuntu /home/ubuntu/.kube
 
   publish_status "running role=$ROLE index=$INDEX step=join-credentials"
   create_worker_join() {
@@ -201,9 +200,15 @@ elif [[ "$ROLE" == "control-plane" ]]; then
   }
   CONTROL_PLANE_JOIN=$(retry 80 get_control_plane_join)
   retry 20 bash -c "$CONTROL_PLANE_JOIN --node-name $NODE_NAME --apiserver-advertise-address $LOCAL_IP --cri-socket unix:///run/containerd/containerd.sock"
+  LOCAL_ADMIN_KUBECONFIG=/etc/kubernetes/local-admin.conf
+  cp /etc/kubernetes/admin.conf "$LOCAL_ADMIN_KUBECONFIG"
+  LOCAL_ADMIN_CLUSTER=$(kubectl --kubeconfig "$LOCAL_ADMIN_KUBECONFIG" \
+    config view -o jsonpath='{.clusters[0].name}')
+  kubectl --kubeconfig "$LOCAL_ADMIN_KUBECONFIG" config set-cluster "$LOCAL_ADMIN_CLUSTER" \
+    --server="https://$LOCAL_IP:6443"
   mkdir -p /root/.kube /home/ubuntu/.kube
-  cp /etc/kubernetes/admin.conf /root/.kube/config
-  cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+  cp "$LOCAL_ADMIN_KUBECONFIG" /root/.kube/config
+  cp "$LOCAL_ADMIN_KUBECONFIG" /home/ubuntu/.kube/config
   chown -R ubuntu:ubuntu /home/ubuntu/.kube
 else
   get_worker_join() {
