@@ -71,8 +71,13 @@ jobs:
         shell: bash
         env:
           INPUT_IMAGE_TAG: ${{ inputs.image-tag }}
+          BUILD_IMAGES: ${{ inputs.build-images }}
         run: |
           set -euo pipefail
+          if [[ "$BUILD_IMAGES" != "true" && -z "$INPUT_IMAGE_TAG" ]]; then
+            echo "An explicit image-tag is required when build-images is false." >&2
+            exit 1
+          fi
           {
             echo "aws-region=${AWS_REGION:-us-east-1}"
             echo "image-tag=${INPUT_IMAGE_TAG:-${GITHUB_SHA}}"
@@ -498,6 +503,37 @@ jobs:
           EOF
           done
 
+          log "Validating application images in ECR."
+          missing_images=()
+          for service in adservice cartservice checkoutservice currencyservice emailservice frontend paymentservice productcatalogservice recommendationservice shippingservice; do
+            if ! aws ecr describe-images \
+              --repository-name "online-boutique/$service" \
+              --image-ids "imageTag=$IMAGE_TAG" \
+              > /dev/null 2>&1; then
+              missing_images+=("$service")
+            fi
+          done
+          if (( ${#missing_images[@]} > 0 )); then
+            echo "Image tag $IMAGE_TAG is missing for: ${missing_images[*]}." >&2
+            echo "Enable build-images or provide a tag that exists for every service." >&2
+            exit 1
+          fi
+
+          log "Refreshing the Kubernetes ECR pull secret."
+          kubectl create namespace online-boutique \
+            --dry-run=client \
+            -o yaml \
+            | kubectl apply -f -
+          ecr_password=$(aws ecr get-login-password)
+          kubectl -n online-boutique create secret docker-registry ecr-registry \
+            --docker-server="$ECR_REGISTRY" \
+            --docker-username=AWS \
+            --docker-password="$ecr_password" \
+            --dry-run=client \
+            -o yaml \
+            | kubectl apply -f -
+          unset ecr_password
+
           log "Applying application manifests with image tag $IMAGE_TAG."
           kubectl apply -k k8s/overlays/dev
           log "Waiting for application deployments to roll out."
@@ -505,12 +541,46 @@ jobs:
             kubectl -n online-boutique rollout status "$deployment" --timeout=15m
           done < <(kubectl -n online-boutique get deployments -o name)
           log "Running the in-cluster frontend smoke test."
-          kubectl -n online-boutique run deployment-smoke-test \
-            --image=curlimages/curl:8.12.1 \
-            --restart=Never \
-            --rm \
-            --attach \
-            -- curl --fail --silent --show-error http://frontend
+          kubectl -n online-boutique delete pod deployment-smoke-test \
+            --ignore-not-found \
+            --wait=true
+          cat <<'EOF' | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: deployment-smoke-test
+            namespace: online-boutique
+          spec:
+            restartPolicy: Never
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              seccompProfile:
+                type: RuntimeDefault
+            containers:
+              - name: curl
+                image: curlimages/curl:8.12.1
+                args:
+                  - --fail
+                  - --silent
+                  - --show-error
+                  - http://frontend
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: ["ALL"]
+          EOF
+          if ! kubectl -n online-boutique wait \
+            --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/deployment-smoke-test \
+            --timeout=2m; then
+            kubectl -n online-boutique describe pod deployment-smoke-test >&2 || true
+            kubectl -n online-boutique logs deployment-smoke-test >&2 || true
+            exit 1
+          fi
+          kubectl -n online-boutique logs deployment-smoke-test
+          kubectl -n online-boutique delete pod deployment-smoke-test --wait=true
           kubectl -n online-boutique get pods -o wide
 
           log "Waiting for the ingress NLB hostname."
