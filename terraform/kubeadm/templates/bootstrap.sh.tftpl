@@ -115,7 +115,7 @@ retry 20 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 
 cat >/etc/default/kubelet <<EOF
-KUBELET_EXTRA_ARGS=--provider-id=$PROVIDER_ID --node-ip=$LOCAL_IP
+KUBELET_EXTRA_ARGS=--cloud-provider=external --provider-id=$PROVIDER_ID --node-ip=$LOCAL_IP
 EOF
 if [[ "$ROLE" == "worker" ]]; then
   sed -i 's/$/ --node-labels=workload=application/' /etc/default/kubelet
@@ -179,6 +179,32 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     --overwrite
 
   publish_status "running role=$ROLE index=$INDEX step=addons"
+  publish_status "running role=$ROLE index=$INDEX step=service-routing"
+  KUBERNETES_SERVICE_IP=$(kubectl get service kubernetes \
+    -o jsonpath='{.spec.clusterIP}')
+  service_routing_ready=false
+  for attempt in $(seq 1 60); do
+    if curl -kfsS --connect-timeout 5 \
+      "https://$KUBERNETES_SERVICE_IP:443/version" >/dev/null; then
+      service_routing_ready=true
+      break
+    fi
+    sleep 5
+  done
+  if [[ "$service_routing_ready" != "true" ]]; then
+    kubectl -n kube-system get pods -l k8s-app=kube-proxy -o wide || true
+    kubectl -n kube-system logs daemonset/kube-proxy --tail=200 || true
+    iptables-save -t nat | grep "$KUBERNETES_SERVICE_IP" || true
+    false
+  fi
+
+  publish_status "running role=$ROLE index=$INDEX step=aws-cloud-controller-manager"
+  retry 20 aws s3 cp \
+    "s3://$BOOTSTRAP_BUCKET/addons/aws-cloud-controller-manager.yaml" \
+    /tmp/aws-ccm.yaml
+  kubectl apply -f /tmp/aws-ccm.yaml
+  kubectl -n kube-system rollout status daemonset/aws-cloud-controller-manager --timeout=10m
+
   publish_status "running role=$ROLE index=$INDEX step=calico-crds"
   # Calico CRDs are too large for kubectl's client-side last-applied annotation.
   retry 20 kubectl apply --server-side --force-conflicts \
@@ -255,13 +281,6 @@ EOF
     journalctl -u kubelet --no-pager -n 300 || true
     false
   fi
-
-  publish_status "running role=$ROLE index=$INDEX step=aws-cloud-controller-manager"
-  retry 20 aws s3 cp \
-    "s3://$BOOTSTRAP_BUCKET/addons/aws-cloud-controller-manager.yaml" \
-    /tmp/aws-ccm.yaml
-  kubectl apply -f /tmp/aws-ccm.yaml
-  kubectl -n kube-system rollout status daemonset/aws-cloud-controller-manager --timeout=10m
 
   publish_status "running role=$ROLE index=$INDEX step=metrics-server"
   retry 20 kubectl apply \

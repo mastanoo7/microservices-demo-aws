@@ -395,11 +395,12 @@ resource "aws_lb" "api" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = substr("${var.name}-api", 0, 32)
-  port        = 6443
-  protocol    = "TCP"
-  target_type = "instance"
-  vpc_id      = var.vpc_id
+  name               = substr("${var.name}-api", 0, 32)
+  port               = 6443
+  protocol           = "TCP"
+  target_type        = "instance"
+  vpc_id             = var.vpc_id
+  preserve_client_ip = false
 
   health_check {
     protocol = "TCP"
