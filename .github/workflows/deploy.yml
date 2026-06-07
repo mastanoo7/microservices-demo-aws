@@ -354,6 +354,45 @@ jobs:
             exit 1
           fi
 
+          log "Waiting for a Ready application worker node."
+          worker_ready=false
+          worker_readiness_started=$SECONDS
+          worker_readiness_deadline=$((SECONDS + 1200))
+          next_worker_log=$((SECONDS + 120))
+          while (( SECONDS < worker_readiness_deadline )); do
+            ready_workers=$(kubectl get nodes \
+              -l workload=application \
+              -o json 2>/dev/null \
+              | jq -r '.items[]
+                | select(any(.status.conditions[]?;
+                    .type == "Ready" and .status == "True"))
+                | .metadata.name' || true)
+            if [[ -n "$ready_workers" ]]; then
+              worker_ready=true
+              ready_worker=${ready_workers%%$'\n'*}
+              log "Application worker node is ready: $ready_worker"
+              break
+            fi
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              echo "SSM port-forwarding session exited while waiting for an application worker." >&2
+              cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
+              exit 1
+            fi
+            if (( SECONDS >= next_worker_log )); then
+              log "No Ready application worker yet; waited $(((SECONDS - worker_readiness_started) / 60)) minutes."
+              kubectl get nodes -o wide || true
+              next_worker_log=$((next_worker_log + 120))
+            fi
+            sleep 10
+          done
+          if [[ "$worker_ready" != "true" ]]; then
+            echo "No application worker became Ready after 20 minutes." >&2
+            kubectl get nodes -o wide >&2 || true
+            kubectl get pods -n kube-system -o wide >&2 || true
+            kubectl get events -A --sort-by=.lastTimestamp >&2 || true
+            exit 1
+          fi
+
           if [[ ! "$APP_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
             echo "APP_HOST must be a DNS hostname. Current value: '$APP_HOST'." >&2
             exit 1
@@ -364,7 +403,7 @@ jobs:
           log "Installing or upgrading ingress-nginx."
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
-          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          if ! helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace ingress-nginx \
             --create-namespace \
             --version 4.14.3 \
@@ -373,7 +412,14 @@ jobs:
             --set-string controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-type=nlb \
             --set-string controller.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme=internet-facing \
             --wait \
-            --timeout 10m
+            --timeout 10m; then
+            echo "ingress-nginx installation failed. Collecting Kubernetes diagnostics." >&2
+            kubectl -n ingress-nginx get all -o wide >&2 || true
+            kubectl -n ingress-nginx describe job ingress-nginx-admission-create >&2 || true
+            kubectl -n ingress-nginx describe pods >&2 || true
+            kubectl -n ingress-nginx get events --sort-by=.lastTimestamp >&2 || true
+            exit 1
+          fi
 
           cat >> "k8s/overlays/dev/kustomization.yaml" <<EOF
           images:

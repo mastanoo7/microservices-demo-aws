@@ -74,8 +74,23 @@ $env:KUBECONFIG="$HOME\.kube\online-boutique-dev"
 kubectl get nodes -o wide
 ```
 
-Without private network connectivity, start an SSM shell on a control-plane node
-and run `sudo kubectl --kubeconfig /etc/kubernetes/admin.conf`.
+Without private network connectivity, start an SSM shell on a control-plane node.
+Session Manager normally logs in as `ssm-user`, while bootstrap configures
+kubectl for `root` and `ubuntu`. Use either:
+
+```bash
+sudo -i
+kubectl get nodes -o wide
+```
+
+or run a single command without changing shells:
+
+```bash
+sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide
+```
+
+Running plain `kubectl` as `ssm-user` without `KUBECONFIG` makes kubectl fall
+back to `http://localhost:8080`.
 
 ## 5. Deploy Applications
 

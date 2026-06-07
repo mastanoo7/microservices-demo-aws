@@ -1,5 +1,25 @@
 # kubeadm Operations Runbook
 
+## kubectl from Session Manager
+
+Session Manager normally opens control-plane sessions as `ssm-user`. Bootstrap
+installs admin kubeconfigs for `root` and `ubuntu`, not for the dynamically
+created SSM user. Start a root login shell before using kubectl:
+
+```bash
+sudo -i
+kubectl get nodes -o wide
+```
+
+For one command, use:
+
+```bash
+sudo kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide
+```
+
+Plain `kubectl` from an unconfigured user falls back to
+`http://localhost:8080`.
+
 ## Routine Checks
 
 ```bash
