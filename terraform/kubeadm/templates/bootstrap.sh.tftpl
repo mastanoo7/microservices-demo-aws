@@ -42,12 +42,21 @@ retry() {
   local attempts="$1"
   shift
   local delay=15
+  local exit_code=0
   for attempt in $(seq 1 "$attempts"); do
-    "$@" && return 0
+    if "$@"; then
+      return 0
+    else
+      exit_code="$?"
+    fi
+    if [[ "$attempt" -eq "$attempts" ]]; then
+      echo "Command failed after $attempt attempts with exit code $exit_code: $*" >&2
+      publish_status "failed role=$ROLE index=$INDEX step=retry-exhausted exit=$exit_code command=$*"
+      return "$exit_code"
+    fi
     echo "Attempt $attempt failed; retrying in $delay seconds" >&2
     sleep "$delay"
   done
-  return 1
 }
 
 imds() {
@@ -171,7 +180,8 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
 
   publish_status "running role=$ROLE index=$INDEX step=addons"
   publish_status "running role=$ROLE index=$INDEX step=calico-crds"
-  retry 20 kubectl apply \
+  # Calico CRDs are too large for kubectl's client-side last-applied annotation.
+  retry 20 kubectl apply --server-side --force-conflicts \
     -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/operator-crds.yaml"
   kubectl wait \
     --for=condition=Established \
