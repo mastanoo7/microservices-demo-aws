@@ -173,18 +173,36 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
   publish_status "running role=$ROLE index=$INDEX step=calico-operator"
   retry 20 kubectl apply \
     -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
+  if ! kubectl -n tigera-operator rollout status \
+    deployment/tigera-operator \
+    --timeout=10m; then
+    kubectl -n tigera-operator get pods -o wide || true
+    kubectl -n tigera-operator describe pods || true
+    kubectl -n tigera-operator logs deployment/tigera-operator --all-containers --tail=200 || true
+    false
+  fi
+  retry 40 kubectl get crd installations.operator.tigera.io
   kubectl wait \
     --for=condition=Established \
     --timeout=5m \
-    crd --all
+    crd/installations.operator.tigera.io
 
   publish_status "running role=$ROLE index=$INDEX step=calico-custom-resources"
-  retry 20 curl -fsSL \
-    "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/custom-resources.yaml" \
-    -o /tmp/calico-custom-resources-upstream.yaml
-  sed "s#192.168.0.0/16#$POD_CIDR#g" \
-    /tmp/calico-custom-resources-upstream.yaml \
-    >/tmp/calico-custom-resources.yaml
+  cat >/tmp/calico-custom-resources.yaml <<EOF
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      - name: default-ipv4-ippool
+        blockSize: 26
+        cidr: $POD_CIDR
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+EOF
   retry 20 kubectl apply -f /tmp/calico-custom-resources.yaml
 
   publish_status "running role=$ROLE index=$INDEX step=aws-cloud-controller-manager"
