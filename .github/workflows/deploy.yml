@@ -396,13 +396,26 @@ jobs:
                 --auto-scaling-group-names "$WORKER_ASG" \
                 --query 'AutoScalingGroups[0].Instances[].InstanceId' \
                 --output text 2>/dev/null || true)
+              current_generation_workers=0
+              stale_generation_workers=0
               for worker_instance_id in $worker_instance_ids; do
                 worker_status=$(aws ssm get-parameter \
                   --name "${KUBECONFIG_PARAMETER%/admin-kubeconfig}/bootstrap-status-worker-$worker_instance_id" \
                   --query Parameter.Value \
                   --output text 2>/dev/null || true)
                 log "Worker $worker_instance_id bootstrap status: ${worker_status:-not published}"
+                if [[ "$worker_status" == *"generation=$BOOTSTRAP_GENERATION"* ]]; then
+                  current_generation_workers=$((current_generation_workers + 1))
+                elif [[ -n "$worker_status" ]]; then
+                  stale_generation_workers=$((stale_generation_workers + 1))
+                fi
               done
+              if [[ -n "$worker_instance_ids" \
+                && "$current_generation_workers" -eq 0 \
+                && "$stale_generation_workers" -gt 0 ]]; then
+                echo "All worker instances use a stale bootstrap generation; the ASG instance refresh did not replace them." >&2
+                exit 1
+              fi
               next_worker_log=$((next_worker_log + 120))
             fi
             sleep 10

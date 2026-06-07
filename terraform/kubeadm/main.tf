@@ -612,7 +612,7 @@ resource "aws_autoscaling_group" "worker" {
 
   launch_template {
     id      = aws_launch_template.worker.id
-    version = "$Latest"
+    version = aws_launch_template.worker.latest_version
   }
 
   instance_refresh {
@@ -620,6 +620,7 @@ resource "aws_autoscaling_group" "worker" {
     preferences {
       min_healthy_percentage = 80
       instance_warmup        = 300
+      skip_matching          = true
     }
     triggers = ["tag"]
   }

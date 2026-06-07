@@ -233,6 +233,16 @@ kind: Installation
 metadata:
   name: default
 spec:
+  controlPlaneNodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  controlPlaneTolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node.cloudprovider.kubernetes.io/uninitialized
+      operator: Exists
+      effect: NoSchedule
+  controlPlaneReplicas: 1
   calicoNetwork:
     ipPools:
       - name: default-ipv4-ippool
