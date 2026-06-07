@@ -254,39 +254,43 @@ jobs:
           fi
           chmod 600 "$KUBECONFIG"
 
-          log "Waiting for a control-plane instance to become online in SSM."
-          target=""
+          target=$(jq -r '.[0] // empty' "${RUNNER_TEMP}/control-plane-ids.json")
+          if [[ -z "$target" ]]; then
+            echo "Terraform returned no primary control-plane instance ID." >&2
+            exit 1
+          fi
+          log "Waiting for primary control-plane instance $target to become online in SSM."
+          target_online=false
           for attempt in $(seq 1 60); do
-            while IFS= read -r instance_id; do
-              status=$(aws ssm describe-instance-information \
-                --filters "Key=InstanceIds,Values=$instance_id" \
-                --query 'InstanceInformationList[0].PingStatus' \
-                --output text 2>/dev/null || true)
-              if [[ "$status" == "Online" ]]; then
-                target="$instance_id"
-                break
-              fi
-            done < <(jq -r '.[]' "${RUNNER_TEMP}/control-plane-ids.json")
-            [[ -n "$target" ]] && break
+            status=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$target" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)
+            if [[ "$status" == "Online" ]]; then
+              target_online=true
+              break
+            fi
             if (( attempt % 6 == 0 )); then
-              log "No control-plane instance is online in SSM yet; waited $((attempt * 10 / 60)) minutes."
+              log "Primary control-plane instance is not online in SSM yet; waited $((attempt * 10 / 60)) minutes."
             fi
             sleep 10
           done
-          if [[ -z "$target" ]]; then
-            echo "No control-plane instance became online in SSM after 10 minutes." >&2
+          if [[ "$target_online" != "true" ]]; then
+            echo "Primary control-plane instance $target did not become online in SSM after 10 minutes." >&2
             aws ssm describe-instance-information \
               --query 'InstanceInformationList[].{InstanceId:InstanceId,PingStatus:PingStatus}' \
               --output table >&2 || true
             exit 1
           fi
-          log "Using control-plane instance $target for the API tunnel."
+          log "Using primary control-plane instance $target for the API tunnel."
 
-          log "Starting the SSM tunnel to Kubernetes API host $API_HOST."
+          # Forward to the API socket on the primary node. Sending this traffic
+          # through the NLB can hairpin back to the same target during bootstrap.
+          log "Starting the SSM tunnel to the primary control-plane API socket."
           aws ssm start-session \
             --target "$target" \
             --document-name AWS-StartPortForwardingSessionToRemoteHost \
-            --parameters "{\"host\":[\"$API_HOST\"],\"portNumber\":[\"6443\"],\"localPortNumber\":[\"6443\"]}" \
+            --parameters '{"host":["127.0.0.1"],"portNumber":["6443"],"localPortNumber":["6443"]}' \
             > "${RUNNER_TEMP}/ssm-tunnel.log" 2>&1 &
           tunnel_pid=$!
           trap 'kill "$tunnel_pid" 2>/dev/null || true' EXIT
@@ -322,21 +326,31 @@ jobs:
 
           log "Waiting for the Kubernetes API readiness endpoint."
           api_ready=false
-          for attempt in $(seq 1 120); do
-            if kubectl get --raw=/readyz > /dev/null 2>&1; then
+          readiness_started=$SECONDS
+          readiness_deadline=$((SECONDS + 1200))
+          next_readiness_log=$((SECONDS + 120))
+          while (( SECONDS < readiness_deadline )); do
+            if kubectl --request-timeout=5s get --raw=/readyz > /dev/null 2>&1; then
               api_ready=true
               log "Kubernetes API is ready."
               break
             fi
-            if (( attempt % 12 == 0 )); then
-              log "Kubernetes API is not ready yet; waited $((attempt * 10 / 60)) minutes."
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              echo "SSM port-forwarding session exited while waiting for the Kubernetes API." >&2
+              cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
+              exit 1
+            fi
+            if (( SECONDS >= next_readiness_log )); then
+              log "Kubernetes API is not ready yet; waited $(((SECONDS - readiness_started) / 60)) minutes."
+              next_readiness_log=$((next_readiness_log + 120))
             fi
             sleep 10
           done
           if [[ "$api_ready" != "true" ]]; then
             echo "Kubernetes API did not become ready through the SSM tunnel after 20 minutes." >&2
-            kubectl cluster-info >&2 || true
-            kubectl get --raw=/readyz?verbose >&2 || true
+            kubectl --request-timeout=10s cluster-info >&2 || true
+            kubectl --request-timeout=10s get --raw=/readyz?verbose >&2 || true
+            cat "${RUNNER_TEMP}/ssm-tunnel.log" >&2
             exit 1
           fi
 
