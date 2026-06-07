@@ -170,6 +170,14 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     --overwrite
 
   publish_status "running role=$ROLE index=$INDEX step=addons"
+  publish_status "running role=$ROLE index=$INDEX step=calico-crds"
+  retry 20 kubectl apply \
+    -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/operator-crds.yaml"
+  kubectl wait \
+    --for=condition=Established \
+    --timeout=10m \
+    crd/installations.operator.tigera.io
+
   publish_status "running role=$ROLE index=$INDEX step=calico-operator"
   retry 20 kubectl apply \
     -f "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/tigera-operator.yaml"
@@ -181,11 +189,6 @@ if [[ "$ROLE" == "control-plane" && "$INDEX" == "0" ]]; then
     kubectl -n tigera-operator logs deployment/tigera-operator --all-containers --tail=200 || true
     false
   fi
-  retry 40 kubectl get crd installations.operator.tigera.io
-  kubectl wait \
-    --for=condition=Established \
-    --timeout=5m \
-    crd/installations.operator.tigera.io
 
   publish_status "running role=$ROLE index=$INDEX step=calico-custom-resources"
   cat >/tmp/calico-custom-resources.yaml <<EOF
