@@ -78,8 +78,8 @@ variable "worker_desired_size" {
   default = 3
 
   validation {
-    condition     = var.worker_desired_size >= var.worker_min_size && var.worker_desired_size <= var.worker_max_size
-    error_message = "worker_desired_size must be between worker_min_size and worker_max_size."
+    condition     = var.worker_desired_size >= 1
+    error_message = "worker_desired_size must be at least 1."
   }
 }
 
@@ -88,8 +88,8 @@ variable "worker_max_size" {
   default = 10
 
   validation {
-    condition     = var.worker_max_size >= var.worker_min_size
-    error_message = "worker_max_size must be greater than or equal to worker_min_size."
+    condition     = var.worker_max_size >= 1
+    error_message = "worker_max_size must be at least 1."
   }
 }
 

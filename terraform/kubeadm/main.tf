@@ -639,5 +639,10 @@ resource "aws_autoscaling_group" "worker" {
 
   lifecycle {
     ignore_changes = [desired_capacity]
+
+    precondition {
+      condition     = var.worker_min_size <= var.worker_desired_size && var.worker_desired_size <= var.worker_max_size
+      error_message = "Worker capacity must satisfy worker_min_size <= worker_desired_size <= worker_max_size."
+    }
   }
 }
