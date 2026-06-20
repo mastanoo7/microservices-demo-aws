@@ -57,7 +57,7 @@ jobs:
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       TFVARS: ${{ secrets.TFVARS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
@@ -157,7 +157,7 @@ jobs:
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       KUBECONFIG: /tmp/online-boutique-kubeconfig
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}

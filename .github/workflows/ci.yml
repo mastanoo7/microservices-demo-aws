@@ -20,7 +20,7 @@ jobs:
     name: GitHub Actions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lint workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
@@ -29,7 +29,7 @@ jobs:
     needs: workflows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python -m pip install --disable-pip-version-check --quiet PyYAML==6.0.3
       - name: Parse YAML files
         shell: python
@@ -65,7 +65,7 @@ jobs:
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       TFVARS: ${{ secrets.TFVARS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
@@ -138,7 +138,7 @@ jobs:
     needs: terraform
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Render Kustomize overlay
         run: kubectl kustomize k8s/overlays/dev > rendered.yaml
       - name: Validate rendered YAML
@@ -156,7 +156,7 @@ jobs:
     needs: kubernetes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v4
       - name: Lint charts
         shell: bash
@@ -186,7 +186,7 @@ jobs:
           - recommendationservice
           - shippingservice
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Resolve build context
         id: context
         shell: bash

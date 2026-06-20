@@ -39,7 +39,7 @@ jobs:
             echo "Confirmation must be destroy-dev" >&2
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
